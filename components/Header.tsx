@@ -1,15 +1,21 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Download, Upload, Grid3X3, Keyboard, PaintBucket, Image, FileCode2, FileJson } from 'lucide-react';
+import { Download, Upload, Grid3X3, Keyboard, PaintBucket, Image, FileCode2, FileJson, Play, Maximize, History, Save, Trash2 } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import Konva from 'konva';
+import { shapesToSvg, downloadSvg } from '@/lib/svgExport';
 
 export default function Header() {
-  const { shapes, clearCanvas, canvasZoom, setCanvasZoom, setCanvasPan, setShowHelp, canvasBg, setCanvasBg } = useEditorStore();
+  const { shapes, clearCanvas, canvasZoom, setCanvasZoom, setCanvasPan, setShowHelp, canvasBg, setCanvasBg, pages, activePageId, setPrototypeMode, snapshots, saveSnapshot, restoreSnapshot, deleteSnapshot } = useEditorStore();
   const bgInputRef = useRef<HTMLInputElement>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const historyRef = useRef<HTMLDivElement>(null);
+  const [snapName, setSnapName] = useState('');
+
+  const activePage = pages.find(p => p.id === activePageId);
 
   const handleResetView = useCallback(() => {
     setCanvasZoom(1);
@@ -44,26 +50,50 @@ export default function Header() {
   }, []);
 
   const handleExportSVG = useCallback(() => {
+    const svg = shapesToSvg(shapes, { background: canvasBg });
+    downloadSvg(svg, `ai-canvas-${Date.now()}.svg`);
+    setExportOpen(false);
+  }, [shapes, canvasBg]);
+
+  const handleExportSelectionSVG = useCallback(() => {
+    const { selectedIds } = useEditorStore.getState();
+    if (selectedIds.length === 0) return;
+    const svg = shapesToSvg(shapes, { selectedIds, background: 'transparent' });
+    downloadSvg(svg, `selection-${Date.now()}.svg`);
+    setExportOpen(false);
+  }, [shapes]);
+
+  const handleExportPNG2x = useCallback(() => {
     const stageNode = Konva.stages[0];
     if (!stageNode) return;
     const oldScale = { x: stageNode.scaleX(), y: stageNode.scaleY() };
     const oldPos = { x: stageNode.x(), y: stageNode.y() };
-    stageNode.scale({ x: 1, y: 1 });
+    stageNode.scale({ x: 2, y: 2 });
     stageNode.position({ x: 0, y: 0 });
     stageNode.draw();
-    const dataUrl = stageNode.toDataURL({ pixelRatio: 2, mimeType: 'image/png' });
+    const dataUrl = stageNode.toDataURL({ pixelRatio: 1, mimeType: 'image/png' });
     stageNode.scale(oldScale);
     stageNode.position(oldPos);
     stageNode.draw();
-    const svgContent = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1920" height="1080" viewBox="0 0 1920 1080">
-  <image width="1920" height="1080" xlink:href="${dataUrl}"/>
-</svg>`;
-    const blob = new Blob([svgContent], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `ai-canvas-${Date.now()}.svg`; a.click();
-    URL.revokeObjectURL(url);
+    a.href = dataUrl; a.download = `ai-canvas-@2x-${Date.now()}.png`; a.click();
+    setExportOpen(false);
+  }, []);
+
+  const handleExportPNG3x = useCallback(() => {
+    const stageNode = Konva.stages[0];
+    if (!stageNode) return;
+    const oldScale = { x: stageNode.scaleX(), y: stageNode.scaleY() };
+    const oldPos = { x: stageNode.x(), y: stageNode.y() };
+    stageNode.scale({ x: 3, y: 3 });
+    stageNode.position({ x: 0, y: 0 });
+    stageNode.draw();
+    const dataUrl = stageNode.toDataURL({ pixelRatio: 1, mimeType: 'image/png' });
+    stageNode.scale(oldScale);
+    stageNode.position(oldPos);
+    stageNode.draw();
+    const a = document.createElement('a');
+    a.href = dataUrl; a.download = `ai-canvas-@3x-${Date.now()}.png`; a.click();
     setExportOpen(false);
   }, []);
 
@@ -76,7 +106,10 @@ export default function Header() {
       try {
         const text = await file.text();
         const data = JSON.parse(text);
-        if (Array.isArray(data)) useEditorStore.setState({ shapes: data, selectedIds: [] });
+        if (Array.isArray(data)) {
+          useEditorStore.getState()._setPageShapes(data);
+          useEditorStore.setState({ selectedIds: [] });
+        }
       } catch (err) { console.error('Failed to import:', err); }
     };
     input.click();
@@ -97,7 +130,9 @@ export default function Header() {
           <h1 className="text-sm font-semibold text-[var(--text-primary)] tracking-tight">AI Canvas</h1>
         </div>
         <div className="h-4 w-px bg-[var(--border)]" />
-        <span className="text-xs text-[var(--text-tertiary)]">{shapes.length} 个图形</span>
+        <span className="text-xs text-[var(--text-tertiary)]">
+          {activePage?.name || 'Page'} · {shapes.length} 个图形
+        </span>
       </div>
 
       <div className="flex items-center gap-1">
@@ -112,7 +147,18 @@ export default function Header() {
       </div>
 
       <div className="flex items-center gap-1">
-        {/* Canvas BG */}
+        {/* Prototype play */}
+        <button
+          onClick={() => setPrototypeMode(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 transition-opacity"
+          title="预览原型"
+        >
+          <Play size={13} fill="currentColor" />
+          预览
+        </button>
+
+        <div className="h-4 w-px bg-[var(--border)] mx-1" />
+
         <button
           onClick={() => bgInputRef.current?.click()}
           className="relative p-2 rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-secondary)] transition-colors"
@@ -127,7 +173,6 @@ export default function Header() {
           <Upload size={16} />
         </button>
 
-        {/* Export dropdown */}
         <div className="relative" ref={exportRef}>
           <button
             onClick={() => setExportOpen(!exportOpen)}
@@ -139,12 +184,22 @@ export default function Header() {
           {exportOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} />
-              <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] py-1 bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl shadow-2xl shadow-black/40 animate-scale-in">
+              <div className="absolute right-0 top-full mt-1 z-50 min-w-[180px] py-1 bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl shadow-2xl shadow-black/40 animate-scale-in">
                 <button onClick={handleExportPNG} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
-                  <Image size={14} className="text-[var(--text-tertiary)]" /> 导出 PNG
+                  <Image size={14} className="text-[var(--text-tertiary)]" /> PNG @1x
                 </button>
+                <button onClick={handleExportPNG2x} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
+                  <Image size={14} className="text-[var(--text-tertiary)]" /> PNG @2x
+                </button>
+                <button onClick={handleExportPNG3x} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
+                  <Image size={14} className="text-[var(--text-tertiary)]" /> PNG @3x
+                </button>
+                <div className="my-1 border-t border-[var(--border)]" />
                 <button onClick={handleExportSVG} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
-                  <FileCode2 size={14} className="text-[var(--text-tertiary)]" /> 导出 SVG
+                  <FileCode2 size={14} className="text-[var(--text-tertiary)]" /> 矢量 SVG
+                </button>
+                <button onClick={handleExportSelectionSVG} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors disabled:opacity-30" disabled={useEditorStore.getState().selectedIds.length === 0}>
+                  <Maximize size={14} className="text-[var(--text-tertiary)]" /> 导出选中 SVG
                 </button>
                 <div className="my-1 border-t border-[var(--border)]" />
                 <button onClick={handleExportJSON} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
@@ -161,6 +216,67 @@ export default function Header() {
             <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2" />
           </svg>
         </button>
+
+        {/* Version History */}
+        <div className="relative" ref={historyRef}>
+          <button
+            onClick={() => setHistoryOpen(!historyOpen)}
+            className="p-2 rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-secondary)] transition-colors"
+            title="版本历史"
+          >
+            <History size={16} />
+          </button>
+          {historyOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setHistoryOpen(false)} />
+              <div className="absolute right-0 top-full mt-1 z-50 w-[260px] py-2 bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl shadow-2xl shadow-black/40 animate-scale-in">
+                <div className="px-3 pb-2 flex items-center gap-1.5">
+                  <input
+                    value={snapName}
+                    onChange={e => setSnapName(e.target.value)}
+                    placeholder="快照名称…"
+                    className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-md px-2 py-1 text-xs text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:border-[var(--accent)] focus:outline-none"
+                    title="快照名称"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && snapName.trim()) {
+                        saveSnapshot(snapName.trim());
+                        setSnapName('');
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => { if (snapName.trim()) { saveSnapshot(snapName.trim()); setSnapName(''); } }}
+                    disabled={!snapName.trim()}
+                    className="p-1.5 rounded-md bg-[var(--accent)] text-white disabled:opacity-30 hover:opacity-90 transition-opacity"
+                    title="保存快照"
+                  ><Save size={12} /></button>
+                </div>
+                <div className="border-t border-[var(--border)]" />
+                {snapshots.length === 0 ? (
+                  <p className="px-3 py-3 text-xs text-[var(--text-tertiary)] text-center">暂无快照</p>
+                ) : (
+                  <div className="max-h-60 overflow-y-auto">
+                    {[...snapshots].reverse().map(s => (
+                      <div key={s.id} className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[var(--bg-hover)] group">
+                        <button
+                          onClick={() => { restoreSnapshot(s.id); setHistoryOpen(false); }}
+                          className="flex-1 text-left"
+                          title="恢复此快照"
+                        >
+                          <div className="text-xs text-[var(--text-primary)] truncate">{s.name}</div>
+                          <div className="text-[10px] text-[var(--text-tertiary)]">{new Date(s.timestamp).toLocaleString()}</div>
+                        </button>
+                        <button onClick={() => deleteSnapshot(s.id)} className="p-0.5 opacity-0 group-hover:opacity-100 text-[var(--text-tertiary)] hover:text-[var(--danger)] transition-all" title="删除快照">
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="h-4 w-px bg-[var(--border)] mx-1" />
 

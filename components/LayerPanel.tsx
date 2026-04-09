@@ -2,8 +2,8 @@
 
 import { useEditorStore } from '@/stores/useEditorStore';
 import { Shape } from '@/lib/types';
-import { Eye, EyeOff, Lock, Unlock, Trash2, Copy, Star, ImageIcon, Triangle, ArrowRight, Type, Minus, Square, Circle, Component, Layers, Frame, PenTool, ChevronRight } from 'lucide-react';
-import { useCallback, useState, useRef, useEffect, useMemo } from 'react';
+import { Eye, EyeOff, Lock, Unlock, Trash2, Copy, Star, ImageIcon, Triangle, ArrowRight, Type, Minus, Square, Circle, Component, Layers, Frame, PenTool, ChevronRight, Search, X } from 'lucide-react';
+import { useCallback, useState, useRef, useEffect, useMemo, DragEvent } from 'react';
 
 const typeIconMap: Record<string, React.ReactNode> = {
   rect: <Square size={13} />,
@@ -23,10 +23,15 @@ interface LayerItemProps {
   shape: Shape;
   isSelected: boolean;
   depth: number;
+  isDragOver?: boolean;
   onSelect: (id: string, addToSelection: boolean) => void;
+  onDragStart?: (e: DragEvent, id: string) => void;
+  onDragOver?: (e: DragEvent, id: string) => void;
+  onDragLeave?: () => void;
+  onDrop?: (e: DragEvent, id: string) => void;
 }
 
-function LayerItem({ shape, isSelected, depth, onSelect }: LayerItemProps) {
+function LayerItem({ shape, isSelected, depth, isDragOver, onSelect, onDragStart, onDragOver, onDragLeave, onDrop }: LayerItemProps) {
   const { updateShape, deleteShape, saveMaterial, duplicateShapes } = useEditorStore();
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(shape.name);
@@ -51,29 +56,36 @@ function LayerItem({ shape, isSelected, depth, onSelect }: LayerItemProps) {
           : 'border-l-transparent hover:bg-[var(--bg-elevated)]'
         }
         ${!shape.visible ? 'opacity-50' : ''}
+        ${isDragOver ? 'border-t-2 border-t-[var(--accent)]' : ''}
       `}
       style={{ paddingLeft: 12 + depth * 16, paddingRight: 12 }}
       onClick={(e) => onSelect(shape.id, e.shiftKey)}
       onDoubleClick={(e) => { e.stopPropagation(); setEditName(shape.name); setIsEditing(true); }}
+      draggable
+      onDragStart={(e) => onDragStart?.(e as unknown as DragEvent, shape.id)}
+      onDragOver={(e) => { e.preventDefault(); onDragOver?.(e as unknown as DragEvent, shape.id); }}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => onDrop?.(e as unknown as DragEvent, shape.id)}
     >
       <span className="w-4 h-4 flex items-center justify-center text-[var(--text-tertiary)] flex-shrink-0">
         {typeIconMap[shape.type] || <Layers size={13} />}
       </span>
 
       {isEditing ? (
-        <input
-          ref={inputRef}
-          value={editName}
-          onChange={(e) => setEditName(e.target.value)}
-          onBlur={commitRename}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commitRename();
-            if (e.key === 'Escape') setIsEditing(false);
-            e.stopPropagation();
-          }}
-          onClick={(e) => e.stopPropagation()}
-          className="flex-1 text-xs bg-[var(--bg-elevated)] border border-[var(--accent)] rounded px-1 py-0.5 text-[var(--text-primary)] outline-none min-w-0"
-        />
+          <input
+            ref={inputRef}
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename();
+              if (e.key === 'Escape') setIsEditing(false);
+              e.stopPropagation();
+            }}
+            onClick={(e) => e.stopPropagation()}
+            title="重命名图层"
+            className="flex-1 text-xs bg-[var(--bg-elevated)] border border-[var(--accent)] rounded px-1 py-0.5 text-[var(--text-primary)] outline-none min-w-0"
+          />
       ) : (
         <span className={`flex-1 text-xs truncate ${!shape.visible ? 'line-through text-[var(--text-tertiary)]' : 'text-[var(--text-primary)]'}`}>
           {shape.name}
@@ -141,7 +153,36 @@ function buildTree(shapes: Shape[]): TreeNode[] {
 }
 
 export default function LayerPanel() {
-  const { shapes, selectedIds, setSelectedIds } = useEditorStore();
+  const { shapes, selectedIds, setSelectedIds, reorderShape } = useEditorStore();
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const draggedId = useRef<string | null>(null);
+
+  const handleDragStart = useCallback((e: DragEvent, id: string) => {
+    draggedId.current = id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+  }, []);
+
+  const handleDragOver = useCallback((e: DragEvent, id: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverId(id);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverId(null);
+  }, []);
+
+  const handleDrop = useCallback((e: DragEvent, targetId: string) => {
+    e.preventDefault();
+    setDragOverId(null);
+    const srcId = draggedId.current;
+    if (!srcId || srcId === targetId) return;
+    const targetIndex = shapes.findIndex(s => s.id === targetId);
+    if (targetIndex >= 0) reorderShape(srcId, targetIndex);
+    draggedId.current = null;
+  }, [shapes, reorderShape]);
 
   const handleSelect = useCallback((id: string, addToSelection: boolean) => {
     const shape = shapes.find(s => s.id === id);
@@ -155,7 +196,13 @@ export default function LayerPanel() {
     }
   }, [shapes, selectedIds, setSelectedIds]);
 
-  const tree = useMemo(() => buildTree([...shapes].reverse()), [shapes]);
+  const filteredShapes = useMemo(() => {
+    if (!searchQuery.trim()) return shapes;
+    const q = searchQuery.toLowerCase();
+    return shapes.filter(s => s.name.toLowerCase().includes(q) || s.type.toLowerCase().includes(q));
+  }, [shapes, searchQuery]);
+
+  const tree = useMemo(() => buildTree([...filteredShapes].reverse()), [filteredShapes]);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const toggle = (id: string) => setCollapsed(prev => {
@@ -208,15 +255,34 @@ export default function LayerPanel() {
         shape={node.shape}
         isSelected={selectedIds.includes(node.shape.id)}
         depth={depth}
+        isDragOver={dragOverId === node.shape.id}
         onSelect={handleSelect}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       />
     );
   };
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border)]">
-        <span className="text-xs text-[var(--text-tertiary)] font-mono">{shapes.length} 个图形</span>
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border)]">
+        <div className="flex items-center flex-1 min-w-0 bg-[var(--bg-elevated)] rounded-md border border-[var(--border)] px-2 py-1 gap-1.5">
+          <Search size={11} className="text-[var(--text-tertiary)] flex-shrink-0" />
+          <input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="搜索图层..."
+            className="flex-1 bg-transparent text-[10px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] min-w-0"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="p-0.5 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]" aria-label="清除搜索">
+              <X size={10} />
+            </button>
+          )}
+        </div>
+        <span className="text-[10px] text-[var(--text-tertiary)] font-mono flex-shrink-0">{filteredShapes.length}</span>
       </div>
       <div className="flex-1 overflow-y-auto">
         {shapes.length === 0 ? (

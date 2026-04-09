@@ -2,8 +2,28 @@
 
 import { useEditorStore } from '@/stores/useEditorStore';
 import { ToolType } from '@/lib/types';
-import { MousePointer2, Square, Circle, Type, Minus, Hand, Undo2, Redo2, Star, Triangle, ImagePlus, Frame, PenTool } from 'lucide-react';
+import { MousePointer2, Square, Circle, Type, Minus, Hand, Undo2, Redo2, Star, Triangle, ImagePlus, Frame, PenTool, ChevronDown } from 'lucide-react';
 import { fileToDataUrl, getImageDimensions } from '@/lib/hooks';
+import { useState, useRef, useEffect } from 'react';
+
+const FRAME_PRESETS = [
+  { name: 'iPhone 15 Pro', w: 393, h: 852 },
+  { name: 'iPhone 15 Pro Max', w: 430, h: 932 },
+  { name: 'iPhone SE', w: 375, h: 667 },
+  { name: 'iPad Pro 11"', w: 834, h: 1194 },
+  { name: 'iPad Pro 12.9"', w: 1024, h: 1366 },
+  { name: 'Android Small', w: 360, h: 640 },
+  { name: 'Android Large', w: 412, h: 915 },
+  { name: 'Desktop', w: 1440, h: 900 },
+  { name: 'Desktop HD', w: 1920, h: 1080 },
+  { name: 'MacBook Pro 14"', w: 1512, h: 982 },
+  { name: 'MacBook Pro 16"', w: 1728, h: 1117 },
+  { name: 'Presentation (16:9)', w: 1920, h: 1080 },
+  { name: 'A4', w: 595, h: 842 },
+  { name: 'Social Post', w: 1080, h: 1080 },
+  { name: 'Story', w: 1080, h: 1920 },
+  { name: 'Twitter Header', w: 1500, h: 500 },
+] as const;
 
 const tools: { id: ToolType; icon: React.ReactNode; label: string; shortcut: string }[] = [
   { id: 'select', icon: <MousePointer2 size={18} />, label: '选择', shortcut: 'V' },
@@ -20,6 +40,39 @@ const tools: { id: ToolType; icon: React.ReactNode; label: string; shortcut: str
 
 export default function Toolbar() {
   const { activeTool, setActiveTool, addShape, setSelectedIds, undo, redo, history, historyIndex } = useEditorStore();
+  const [showFramePresets, setShowFramePresets] = useState(false);
+  const presetRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (presetRef.current && !presetRef.current.contains(e.target as Node)) setShowFramePresets(false);
+    };
+    if (showFramePresets) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showFramePresets]);
+
+  const insertPresetFrame = (preset: typeof FRAME_PRESETS[number]) => {
+    const id = addShape({
+      type: 'frame',
+      x: 200 + Math.random() * 200,
+      y: 100 + Math.random() * 100,
+      width: preset.w,
+      height: preset.h,
+      fill: '#FFFFFF08',
+      stroke: '#555560',
+      strokeWidth: 1,
+      opacity: 1,
+      rotation: 0,
+      visible: true,
+      locked: false,
+      name: preset.name,
+      clipContent: true,
+      cornerRadius: 0,
+    });
+    setSelectedIds([id]);
+    setActiveTool('select');
+    setShowFramePresets(false);
+  };
 
   const handleImageUpload = async () => {
     const input = document.createElement('input');
@@ -53,24 +106,51 @@ export default function Toolbar() {
       {tools.map((tool, i) => (
         <div key={tool.id} className="flex items-center">
           {(i === 2) && <div className="w-px h-5 bg-[var(--border)] mx-1" />}
-          <button
-            onClick={() => setActiveTool(tool.id)}
-            className={`
-              relative p-2 rounded-lg transition-all duration-150 group
-              ${activeTool === tool.id
-                ? 'bg-[var(--accent)] text-[var(--bg-deep)]'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-              }
-            `}
-            title={`${tool.label} (${tool.shortcut})`}
-          >
-            {tool.icon}
-            <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 px-2 py-0.5 text-[10px] bg-[var(--bg-deep)] border border-[var(--border)] rounded text-[var(--text-secondary)] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
-              {tool.label} <kbd className="ml-1 text-[var(--accent)]">{tool.shortcut}</kbd>
-            </span>
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setActiveTool(tool.id)}
+              className={`
+                relative p-2 rounded-lg transition-all duration-150 group
+                ${activeTool === tool.id
+                  ? 'bg-[var(--accent)] text-[var(--bg-deep)]'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                }
+              `}
+              title={`${tool.label} (${tool.shortcut})`}
+            >
+              {tool.icon}
+              <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 px-2 py-0.5 text-[10px] bg-[var(--bg-deep)] border border-[var(--border)] rounded text-[var(--text-secondary)] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+                {tool.label} <kbd className="ml-1 text-[var(--accent)]">{tool.shortcut}</kbd>
+              </span>
+            </button>
+            {tool.id === 'frame' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowFramePresets(!showFramePresets); }}
+                className="absolute -right-1 -bottom-1 w-3 h-3 rounded-sm bg-[var(--bg-elevated)] border border-[var(--border)] flex items-center justify-center text-[var(--text-tertiary)] hover:text-[var(--accent)]"
+                title="画框预设"
+                aria-label="画框预设"
+              >
+                <ChevronDown size={7} />
+              </button>
+            )}
+          </div>
         </div>
       ))}
+      {showFramePresets && (
+        <div ref={presetRef} className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-50 w-56 max-h-80 overflow-y-auto py-1 bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl shadow-2xl shadow-black/40 animate-scale-in">
+          <div className="px-3 py-1.5 text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider">画框预设</div>
+          {FRAME_PRESETS.map((preset) => (
+            <button
+              key={preset.name}
+              onClick={() => insertPresetFrame(preset)}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+            >
+              <span className="text-xs">{preset.name}</span>
+              <span className="text-[10px] text-[var(--text-tertiary)] font-mono">{preset.w}×{preset.h}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="w-px h-5 bg-[var(--border)] mx-1" />
 

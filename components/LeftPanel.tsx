@@ -3,42 +3,43 @@
 import { useState } from 'react';
 import LayerPanel from './LayerPanel';
 import ComponentLibrary from './ComponentLibrary';
-import { Layers, LayoutGrid } from 'lucide-react';
+import DesignTokenPanel from './DesignTokenPanel';
+import { Layers, LayoutGrid, Palette } from 'lucide-react';
+
+type LeftTab = 'layers' | 'components' | 'tokens';
 
 export default function LeftPanel() {
-  const [tab, setTab] = useState<'layers' | 'components'>('layers');
+  const [tab, setTab] = useState<LeftTab>('layers');
+
+  const tabs: { id: LeftTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'layers', label: '图层', icon: <Layers size={14} /> },
+    { id: 'components', label: '组件库', icon: <LayoutGrid size={14} /> },
+    { id: 'tokens', label: '变量', icon: <Palette size={14} /> },
+  ];
 
   return (
     <div className="h-full flex flex-col bg-[var(--bg-surface)] border-r border-[var(--border)]">
-      {/* Tab header */}
       <div className="flex border-b border-[var(--border)]">
-        <button
-          onClick={() => setTab('layers')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors border-b-2 ${
-            tab === 'layers'
-              ? 'text-[var(--accent)] border-[var(--accent)]'
-              : 'text-[var(--text-tertiary)] border-transparent hover:text-[var(--text-secondary)]'
-          }`}
-        >
-          <Layers size={14} />
-          图层
-        </button>
-        <button
-          onClick={() => setTab('components')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors border-b-2 ${
-            tab === 'components'
-              ? 'text-[var(--accent)] border-[var(--accent)]'
-              : 'text-[var(--text-tertiary)] border-transparent hover:text-[var(--text-secondary)]'
-          }`}
-        >
-          <LayoutGrid size={14} />
-          组件库
-        </button>
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors border-b-2 ${
+              tab === t.id
+                ? 'text-[var(--accent)] border-[var(--accent)]'
+                : 'text-[var(--text-tertiary)] border-transparent hover:text-[var(--text-secondary)]'
+            }`}
+          >
+            {t.icon}
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* Content */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {tab === 'layers' ? <LayerPanel /> : <ComponentLibrary />}
+        {tab === 'layers' && <LayerPanel />}
+        {tab === 'components' && <ComponentLibrary />}
+        {tab === 'tokens' && <DesignTokenPanel />}
       </div>
     </div>
   );

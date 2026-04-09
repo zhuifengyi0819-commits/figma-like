@@ -34,6 +34,48 @@ export interface PathPoint {
   cp2?: { x: number; y: number };
 }
 
+// Constraints for child shapes relative to parent frame
+export interface Constraints {
+  horizontal: 'left' | 'right' | 'center' | 'leftRight' | 'scale';
+  vertical: 'top' | 'bottom' | 'center' | 'topBottom' | 'scale';
+}
+
+export type TextSizing = 'fixed' | 'autoWidth' | 'autoHeight';
+
+export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'
+  | 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference' | 'exclusion';
+
+export interface BlurEffect {
+  type: 'layer' | 'background';
+  radius: number;
+}
+
+export interface LayoutGrid {
+  type: 'columns' | 'rows' | 'grid';
+  count: number;
+  gutterSize: number;
+  margin: number;
+  color: string;
+  visible: boolean;
+}
+
+export interface VersionSnapshot {
+  id: string;
+  name: string;
+  timestamp: number;
+  shapes: Shape[];
+}
+
+// Prototype interaction attached to a shape
+export interface Interaction {
+  trigger: 'click' | 'hover' | 'drag';
+  action: 'navigateTo' | 'back' | 'openUrl' | 'swap' | 'scrollTo';
+  targetFrameId?: string;
+  url?: string;
+  transition?: 'instant' | 'dissolve' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown';
+  duration?: number;
+}
+
 export interface Shape {
   id: string;
   type: ShapeType;
@@ -70,22 +112,83 @@ export interface Shape {
   lineHeight?: number;
   letterSpacing?: number;
 
-  // Frame hierarchy
   parentId?: string;
   clipContent?: boolean;
-
-  // Auto Layout (frames only)
   autoLayout?: AutoLayout;
 
-  // Pen tool paths
   pathData?: string;
   pathPoints?: PathPoint[];
   closePath?: boolean;
 
-  // Multiple effects stack
+  // Constraints (children of frames)
+  constraints?: Constraints;
+
+  // Text sizing mode
+  textSizing?: TextSizing;
+
+  // Visual effects
+  blendMode?: BlendMode;
+  blur?: BlurEffect;
+
+  // Layout grid (frames only)
+  layoutGrids?: LayoutGrid[];
+
   fills?: Fill[];
   shadows?: Shadow[];
+
+  // Component/Instance system
+  masterComponentId?: string;
+  isMainComponent?: boolean;
+  variantName?: string;
+  overrides?: Record<string, unknown>;
+
+  // Prototype interactions
+  interactions?: Interaction[];
+
+  // Design token references (key = property name, value = token id)
+  tokenRefs?: Record<string, string>;
 }
+
+// ==================== Multi-page ====================
+
+export interface Page {
+  id: string;
+  name: string;
+  shapes: Shape[];
+}
+
+// ==================== Component System ====================
+
+export interface ComponentDef {
+  id: string;
+  name: string;
+  shapes: Shape[];
+  variants: VariantDef[];
+  createdAt: number;
+}
+
+export interface VariantDef {
+  id: string;
+  name: string;
+  overrides: Record<string, Partial<Shape>>;
+}
+
+// ==================== Design Tokens ====================
+
+export interface DesignToken {
+  id: string;
+  name: string;
+  category: 'color' | 'fontSize' | 'spacing' | 'borderRadius' | 'fontFamily' | 'shadow';
+  value: string;
+}
+
+export interface DesignTheme {
+  id: string;
+  name: string;
+  tokens: DesignToken[];
+}
+
+// ==================== Existing types ====================
 
 export interface ChatMessage {
   id: string;
@@ -141,6 +244,33 @@ export const DEFAULT_AUTO_LAYOUT: AutoLayout = {
   alignItems: 'start',
   justifyContent: 'start',
 };
+
+export const PRESET_TOKENS: DesignToken[] = [
+  { id: 'tok-primary', name: 'Primary', category: 'color', value: '#1677FF' },
+  { id: 'tok-secondary', name: 'Secondary', category: 'color', value: '#722ED1' },
+  { id: 'tok-success', name: 'Success', category: 'color', value: '#52C41A' },
+  { id: 'tok-warning', name: 'Warning', category: 'color', value: '#FADB14' },
+  { id: 'tok-danger', name: 'Danger', category: 'color', value: '#F5222D' },
+  { id: 'tok-bg', name: 'Background', category: 'color', value: '#141414' },
+  { id: 'tok-surface', name: 'Surface', category: 'color', value: '#1C1C21' },
+  { id: 'tok-text', name: 'Text', category: 'color', value: '#E8E4DF' },
+  { id: 'tok-text-dim', name: 'Text Dim', category: 'color', value: '#8C8C8C' },
+  { id: 'tok-border', name: 'Border', category: 'color', value: '#303036' },
+  { id: 'tok-fs-xs', name: 'Font XS', category: 'fontSize', value: '12' },
+  { id: 'tok-fs-sm', name: 'Font SM', category: 'fontSize', value: '14' },
+  { id: 'tok-fs-md', name: 'Font MD', category: 'fontSize', value: '16' },
+  { id: 'tok-fs-lg', name: 'Font LG', category: 'fontSize', value: '24' },
+  { id: 'tok-fs-xl', name: 'Font XL', category: 'fontSize', value: '32' },
+  { id: 'tok-sp-xs', name: 'Space XS', category: 'spacing', value: '4' },
+  { id: 'tok-sp-sm', name: 'Space SM', category: 'spacing', value: '8' },
+  { id: 'tok-sp-md', name: 'Space MD', category: 'spacing', value: '16' },
+  { id: 'tok-sp-lg', name: 'Space LG', category: 'spacing', value: '24' },
+  { id: 'tok-sp-xl', name: 'Space XL', category: 'spacing', value: '32' },
+  { id: 'tok-rad-sm', name: 'Radius SM', category: 'borderRadius', value: '4' },
+  { id: 'tok-rad-md', name: 'Radius MD', category: 'borderRadius', value: '8' },
+  { id: 'tok-rad-lg', name: 'Radius LG', category: 'borderRadius', value: '16' },
+  { id: 'tok-rad-full', name: 'Radius Full', category: 'borderRadius', value: '9999' },
+];
 
 export const CANVAS_WIDTH = 1920;
 export const CANVAS_HEIGHT = 1080;

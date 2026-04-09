@@ -6,6 +6,7 @@ import { CANVAS_WIDTH, CANVAS_HEIGHT } from '@/lib/types';
 const toolLabels: Record<string, string> = {
   select: '选择', hand: '抓手', rect: '矩形', circle: '圆形',
   text: '文本', line: '线条', star: '星形', triangle: '三角', image: '图片',
+  frame: '画框', pen: '钢笔',
 };
 
 export default function StatusBar() {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Copy, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, Lock, Unlock } from 'lucide-react';
+import { Copy, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, Lock, Unlock, Paintbrush, ClipboardPaste } from 'lucide-react';
 
 interface MenuPosition {
   x: number;
@@ -11,7 +11,7 @@ interface MenuPosition {
 
 export default function ContextMenu() {
   const [pos, setPos] = useState<MenuPosition | null>(null);
-  const { selectedIds, shapes, duplicateShapes, deleteShapes, bringForward, sendBackward, updateShape } = useEditorStore();
+  const { selectedIds, shapes, duplicateShapes, deleteShapes, bringForward, sendBackward, updateShape, copyStyle, pasteStyle, copiedStyle } = useEditorStore();
 
   const selectedShapes = shapes.filter((s) => selectedIds.includes(s.id));
   const singleShape = selectedShapes.length === 1 ? selectedShapes[0] : null;
@@ -54,6 +54,21 @@ export default function ContextMenu() {
       shortcut: 'Del',
       danger: true,
       action: () => { deleteShapes(selectedIds); close(); },
+    },
+    { divider: true },
+    {
+      label: '复制样式',
+      icon: <Paintbrush size={14} />,
+      shortcut: '⌥⌘C',
+      action: () => { copyStyle(); close(); },
+      disabled: !singleShape,
+    },
+    {
+      label: '粘贴样式',
+      icon: <ClipboardPaste size={14} />,
+      shortcut: '⌥⌘V',
+      action: () => { pasteStyle(); close(); },
+      disabled: !copiedStyle,
     },
     { divider: true },
     {
