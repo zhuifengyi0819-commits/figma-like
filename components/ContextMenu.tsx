@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Copy, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, Lock, Unlock, Paintbrush, ClipboardPaste } from 'lucide-react';
+import { Copy, Trash2, ArrowUp, ArrowDown, Eye, EyeOff, Lock, Unlock, Paintbrush, ClipboardPaste, Group, Ungroup } from 'lucide-react';
 
 interface MenuPosition {
   x: number;
@@ -11,7 +11,7 @@ interface MenuPosition {
 
 export default function ContextMenu() {
   const [pos, setPos] = useState<MenuPosition | null>(null);
-  const { selectedIds, shapes, duplicateShapes, deleteShapes, bringForward, sendBackward, updateShape, copyStyle, pasteStyle, copiedStyle } = useEditorStore();
+  const { selectedIds, shapes, duplicateShapes, deleteShapes, bringForward, sendBackward, updateShape, copyStyle, pasteStyle, copiedStyle, groupSelection, ungroupSelection } = useEditorStore();
 
   const selectedShapes = shapes.filter((s) => selectedIds.includes(s.id));
   const singleShape = selectedShapes.length === 1 ? selectedShapes[0] : null;
@@ -42,6 +42,20 @@ export default function ContextMenu() {
   if (!pos || selectedIds.length === 0) return null;
 
   const items = [
+    {
+      label: '编组',
+      icon: <Group size={14} />,
+      shortcut: '⌘G',
+      action: () => { groupSelection(); close(); },
+      disabled: selectedIds.length < 2,
+    },
+    {
+      label: '取消编组',
+      icon: <Ungroup size={14} />,
+      shortcut: '⌘⇧G',
+      action: () => { ungroupSelection(); close(); },
+      disabled: !(singleShape?.type === 'group'),
+    },
     {
       label: '复制',
       icon: <Copy size={14} />,

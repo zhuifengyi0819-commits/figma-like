@@ -1,11 +1,12 @@
 import { Shape } from './types';
+import { isLayoutContainer as isFrameLike, containerClipOverflow } from './measurement';
 
 // ===================== CSS Generation =====================
 
 export function shapeToCss(shape: Shape, _allShapes?: Shape[]): string {
   const props: string[] = [];
 
-  if (shape.type === 'rect' || shape.type === 'image' || shape.type === 'component' || shape.type === 'frame') {
+  if (shape.type === 'rect' || shape.type === 'image' || shape.type === 'component' || isFrameLike(shape)) {
     if (shape.width) props.push(`width: ${Math.round(shape.width)}px`);
     if (shape.height) props.push(`height: ${Math.round(shape.height)}px`);
   }
@@ -18,7 +19,7 @@ export function shapeToCss(shape: Shape, _allShapes?: Shape[]): string {
   }
 
   // Frame → flex container
-  if (shape.type === 'frame' && shape.autoLayout) {
+  if (isFrameLike(shape) && shape.autoLayout) {
     const al = shape.autoLayout;
     props.push(`display: flex`);
     props.push(`flex-direction: ${al.direction === 'horizontal' ? 'row' : 'column'}`);
@@ -28,10 +29,10 @@ export function shapeToCss(shape: Shape, _allShapes?: Shape[]): string {
     props.push(`align-items: ${alignMap[al.alignItems]}`);
     const justifyMap = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between' };
     props.push(`justify-content: ${justifyMap[al.justifyContent]}`);
-    if (shape.clipContent !== false) props.push(`overflow: hidden`);
-  } else if (shape.type === 'frame') {
+    if (containerClipOverflow(shape)) props.push(`overflow: hidden`);
+  } else if (isFrameLike(shape)) {
     props.push(`position: relative`);
-    if (shape.clipContent !== false) props.push(`overflow: hidden`);
+    if (containerClipOverflow(shape)) props.push(`overflow: hidden`);
   }
 
   if (shape.type === 'text') {
@@ -61,7 +62,7 @@ export function shapeToCss(shape: Shape, _allShapes?: Shape[]): string {
     }
   }
 
-  if ((shape.type === 'rect' || shape.type === 'frame') && shape.cornerRadius) {
+  if ((shape.type === 'rect' || isFrameLike(shape)) && shape.cornerRadius) {
     props.push(`border-radius: ${shape.cornerRadius}px`);
   }
 
@@ -84,7 +85,7 @@ export function shapeToCss(shape: Shape, _allShapes?: Shape[]): string {
     props.push(`box-shadow: ${shadows.map(s => `${s.offsetX}px ${s.offsetY}px ${s.blur}px ${s.color}`).join(', ')}`);
   }
 
-  if (shape.type !== 'frame') {
+  if (!isFrameLike(shape)) {
     props.push(`position: absolute`);
     props.push(`left: ${Math.round(shape.x)}px`);
     props.push(`top: ${Math.round(shape.y)}px`);
@@ -103,7 +104,7 @@ export function shapeToReact(shape: Shape): string {
 
   const style = buildReactStyle(shape);
   const styleStr = formatReactStyle(style);
-  const tag = shape.type === 'frame' ? 'div' : 'div';
+  const tag = isFrameLike(shape) ? 'div' : 'div';
 
   return `<${tag}\n  className="${sanitizeName(shape.name)}"\n  style={${styleStr}}\n/>`;
 }
@@ -178,7 +179,7 @@ function buildReactStyle(shape: Shape): Record<string, string | number> {
     s.width = d; s.height = d; s.borderRadius = '50%';
   }
 
-  if (shape.type === 'frame' && shape.autoLayout) {
+  if (isFrameLike(shape) && shape.autoLayout) {
     const al = shape.autoLayout;
     s.display = 'flex';
     s.flexDirection = al.direction === 'horizontal' ? 'row' : 'column';
@@ -186,7 +187,7 @@ function buildReactStyle(shape: Shape): Record<string, string | number> {
     s.padding = `${al.paddingTop}px ${al.paddingRight}px ${al.paddingBottom}px ${al.paddingLeft}px`;
     const alignMap = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch' };
     s.alignItems = alignMap[al.alignItems];
-    if (shape.clipContent !== false) s.overflow = 'hidden';
+    if (containerClipOverflow(shape)) s.overflow = 'hidden';
   }
 
   if (shape.fill && shape.fill !== 'transparent') {
@@ -194,7 +195,7 @@ function buildReactStyle(shape: Shape): Record<string, string | number> {
     else { s.backgroundColor = shape.fill; }
   }
 
-  if ((shape.type === 'rect' || shape.type === 'frame') && shape.cornerRadius) {
+  if ((shape.type === 'rect' || isFrameLike(shape)) && shape.cornerRadius) {
     s.borderRadius = shape.cornerRadius;
   }
 
@@ -219,7 +220,7 @@ function buildReactStyle(shape: Shape): Record<string, string | number> {
 export function shapeToTailwind(shape: Shape): string {
   const cls: string[] = [];
 
-  if (shape.type === 'rect' || shape.type === 'image' || shape.type === 'component' || shape.type === 'frame') {
+  if (shape.type === 'rect' || shape.type === 'image' || shape.type === 'component' || isFrameLike(shape)) {
     if (shape.width) cls.push(`w-[${Math.round(shape.width)}px]`);
     if (shape.height) cls.push(`h-[${Math.round(shape.height)}px]`);
   }
@@ -229,7 +230,7 @@ export function shapeToTailwind(shape: Shape): string {
     cls.push(`w-[${Math.round(d)}px]`); cls.push(`h-[${Math.round(d)}px]`); cls.push(`rounded-full`);
   }
 
-  if (shape.type === 'frame' && shape.autoLayout) {
+  if (isFrameLike(shape) && shape.autoLayout) {
     cls.push('flex');
     cls.push(shape.autoLayout.direction === 'horizontal' ? 'flex-row' : 'flex-col');
     cls.push(`gap-[${shape.autoLayout.gap}px]`);
@@ -238,7 +239,7 @@ export function shapeToTailwind(shape: Shape): string {
     else cls.push(`pt-[${pt}px] pr-[${pr}px] pb-[${pb}px] pl-[${pl}px]`);
     const alignMap = { start: 'items-start', center: 'items-center', end: 'items-end', stretch: 'items-stretch' };
     cls.push(alignMap[shape.autoLayout.alignItems]);
-    if (shape.clipContent !== false) cls.push('overflow-hidden');
+    if (containerClipOverflow(shape)) cls.push('overflow-hidden');
   }
 
   if (shape.type === 'text') {
@@ -256,7 +257,7 @@ export function shapeToTailwind(shape: Shape): string {
     }
   }
 
-  if ((shape.type === 'rect' || shape.type === 'frame') && shape.cornerRadius) {
+  if ((shape.type === 'rect' || isFrameLike(shape)) && shape.cornerRadius) {
     const r = shape.cornerRadius;
     if (r <= 2) cls.push('rounded-sm');
     else if (r <= 4) cls.push('rounded');
@@ -315,7 +316,7 @@ export function shapeToHtml(shape: Shape): string {
 
 function shapeToCssInline(shape: Shape): string {
   const props: string[] = [];
-  if (shape.type === 'rect' || shape.type === 'image' || shape.type === 'component' || shape.type === 'frame') {
+  if (shape.type === 'rect' || shape.type === 'image' || shape.type === 'component' || isFrameLike(shape)) {
     if (shape.width) props.push(`width:${Math.round(shape.width)}px`);
     if (shape.height) props.push(`height:${Math.round(shape.height)}px`);
   }
@@ -323,7 +324,7 @@ function shapeToCssInline(shape: Shape): string {
     const d = (shape.radius || 50) * 2;
     props.push(`width:${d}px`); props.push(`height:${d}px`); props.push(`border-radius:50%`);
   }
-  if (shape.type === 'frame' && shape.autoLayout) {
+  if (isFrameLike(shape) && shape.autoLayout) {
     props.push(`display:flex`);
     props.push(`flex-direction:${shape.autoLayout.direction === 'horizontal' ? 'row' : 'column'}`);
     props.push(`gap:${shape.autoLayout.gap}px`);
@@ -334,7 +335,7 @@ function shapeToCssInline(shape: Shape): string {
   } else if (shape.fill && shape.fill !== 'transparent') {
     props.push(`background:${shape.fill}`);
   }
-  if ((shape.type === 'rect' || shape.type === 'frame') && shape.cornerRadius) props.push(`border-radius:${shape.cornerRadius}px`);
+  if ((shape.type === 'rect' || isFrameLike(shape)) && shape.cornerRadius) props.push(`border-radius:${shape.cornerRadius}px`);
   if (shape.stroke && shape.stroke !== 'transparent' && shape.strokeWidth > 0) {
     props.push(`border:${shape.strokeWidth}px ${shape.strokeDash ? 'dashed' : 'solid'} ${shape.stroke}`);
   }
@@ -365,7 +366,7 @@ export function shapesToFullReact(shapes: Shape[], componentName = 'Design'): st
 
 function renderShapeReact(shape: Shape, allShapes: Shape[], indent: string, lines: string[]) {
   const style = buildReactStyle(shape);
-  if (shape.type !== 'frame') {
+  if (!isFrameLike(shape)) {
     style.position = 'absolute';
     style.left = Math.round(shape.x);
     style.top = Math.round(shape.y);
@@ -376,7 +377,7 @@ function renderShapeReact(shape: Shape, allShapes: Shape[], indent: string, line
     lines.push(`${indent}<span style={${styleStr}}>${shape.text || ''}</span>`);
   } else if (shape.type === 'image') {
     lines.push(`${indent}<img src="..." alt="${shape.name}" style={${styleStr}} />`);
-  } else if (shape.type === 'frame') {
+  } else if (isFrameLike(shape)) {
     const children = allShapes.filter(s => s.parentId === shape.id && s.visible);
     if (children.length > 0) {
       lines.push(`${indent}<div style={${styleStr}}>`);
@@ -430,7 +431,7 @@ function renderShapeHtml(shape: Shape, allShapes: Shape[], indent: string, lines
     lines.push(`${indent}<span class="${cls}">${shape.text || ''}</span>`);
   } else if (shape.type === 'image') {
     lines.push(`${indent}<img class="${cls}" src="..." alt="${shape.name}" />`);
-  } else if (shape.type === 'frame') {
+  } else if (isFrameLike(shape)) {
     const children = allShapes.filter(s => s.parentId === shape.id && s.visible);
     lines.push(`${indent}<div class="${cls}">`);
     for (const child of children) {

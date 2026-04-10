@@ -2,6 +2,7 @@
 
 import { useEditorStore } from '@/stores/useEditorStore';
 import { Shape, Interaction } from '@/lib/types';
+import { isLayoutContainer, containerClipOverflow } from '@/lib/measurement';
 import { X, ArrowLeft, Maximize2 } from 'lucide-react';
 import { useState, useCallback, useRef, useEffect } from 'react';
 
@@ -14,13 +15,13 @@ function resolveShapeStyle(shape: Shape): React.CSSProperties {
   };
   if (shape.rotation) s.transform = `rotate(${shape.rotation}deg)`;
 
-  if (shape.type === 'rect' || shape.type === 'frame') {
+  if (shape.type === 'rect' || isLayoutContainer(shape)) {
     s.width = shape.width || 100;
     s.height = shape.height || 100;
     s.backgroundColor = shape.fill;
     if (shape.cornerRadius) s.borderRadius = shape.cornerRadius;
-    if (shape.type === 'frame' && shape.clipContent !== false) s.overflow = 'hidden';
-    if (shape.type === 'frame' && shape.autoLayout) {
+    if (isLayoutContainer(shape) && containerClipOverflow(shape)) s.overflow = 'hidden';
+    if (isLayoutContainer(shape) && shape.autoLayout) {
       s.display = 'flex';
       s.flexDirection = shape.autoLayout.direction === 'horizontal' ? 'row' : 'column';
       s.gap = shape.autoLayout.gap;
@@ -112,7 +113,7 @@ export default function PrototypePlayer() {
   const allShapes = shapes;
 
   // Find all top-level frames
-  const frames = allShapes.filter(s => s.type === 'frame' && !s.parentId);
+  const frames = allShapes.filter(s => isLayoutContainer(s) && !s.parentId);
   const [currentFrameId, setCurrentFrameId] = useState<string | null>(frames[0]?.id || null);
   const [transitioning, setTransitioning] = useState(false);
   const [transitionClass, setTransitionClass] = useState('');
@@ -152,7 +153,7 @@ export default function PrototypePlayer() {
   const visibleShapes = currentFrame ? allShapes.filter(s => s.parentId === currentFrameId && s.visible) : allShapes.filter(s => !s.parentId && s.visible);
 
   // Also collect all pages' shapes with interactions
-  const allPagesFrames = pages.flatMap(p => p.shapes.filter(s => s.type === 'frame' && !s.parentId));
+  const allPagesFrames = pages.flatMap(p => p.shapes.filter(s => isLayoutContainer(s) && !s.parentId));
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
@@ -191,7 +192,7 @@ export default function PrototypePlayer() {
             height: currentFrame?.height || 1080,
             backgroundColor: currentFrame?.fill || '#1A1A1D',
             borderRadius: currentFrame?.cornerRadius || 0,
-            overflow: currentFrame?.clipContent !== false ? 'hidden' : undefined,
+            overflow: currentFrame && containerClipOverflow(currentFrame) ? 'hidden' : undefined,
             transition: transitioning ? 'opacity 0.3s' : undefined,
           }}
         >

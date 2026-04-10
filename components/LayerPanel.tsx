@@ -2,7 +2,7 @@
 
 import { useEditorStore } from '@/stores/useEditorStore';
 import { Shape } from '@/lib/types';
-import { Eye, EyeOff, Lock, Unlock, Trash2, Copy, Star, ImageIcon, Triangle, ArrowRight, Type, Minus, Square, Circle, Component, Layers, Frame, PenTool, ChevronRight, Search, X } from 'lucide-react';
+import { Eye, EyeOff, Lock, Unlock, Trash2, Copy, Star, ImageIcon, Triangle, ArrowRight, Type, Minus, Square, Circle, Component, Layers, Frame, PenTool, ChevronRight, Search, X, Group } from 'lucide-react';
 import { useCallback, useState, useRef, useEffect, useMemo, DragEvent } from 'react';
 
 const typeIconMap: Record<string, React.ReactNode> = {
@@ -16,6 +16,7 @@ const typeIconMap: Record<string, React.ReactNode> = {
   image: <ImageIcon size={13} />,
   component: <Component size={13} />,
   frame: <Frame size={13} />,
+  group: <Group size={13} />,
   path: <PenTool size={13} />,
 };
 
@@ -214,9 +215,9 @@ export default function LayerPanel() {
   const renderNode = (node: TreeNode, depth: number): React.ReactNode => {
     const hasChildren = node.children.length > 0;
     const isCollapsed = collapsed.has(node.shape.id);
-    const isFrame = node.shape.type === 'frame';
+    const isContainer = node.shape.type === 'frame' || node.shape.type === 'group';
 
-    if (hasChildren || isFrame) {
+    if (hasChildren || isContainer) {
       return (
         <div key={node.shape.id}>
           <div
@@ -238,7 +239,7 @@ export default function LayerPanel() {
               {typeIconMap[node.shape.type] || <Layers size={13} />}
             </span>
             <span className="flex-1 text-xs truncate text-[var(--text-primary)]">{node.shape.name}</span>
-            {isFrame && node.shape.autoLayout && (
+            {isContainer && node.shape.autoLayout && (
               <span className="text-[9px] px-1 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] flex-shrink-0">
                 {node.shape.autoLayout.direction === 'horizontal' ? '→' : '↓'}
               </span>

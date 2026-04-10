@@ -49,11 +49,11 @@ export default function CodeInspector() {
     const s = selectedShapes[0];
     const props: { key: string; value: string }[] = [];
 
-    if (s.type === 'rect' || s.type === 'image' || s.type === 'component' || s.type === 'frame') {
+    if (s.type === 'rect' || s.type === 'image' || s.type === 'component' || s.type === 'frame' || s.type === 'group') {
       if (s.width) props.push({ key: 'width', value: `${Math.round(s.width)}px` });
       if (s.height) props.push({ key: 'height', value: `${Math.round(s.height)}px` });
     }
-    if (s.type === 'frame' && s.autoLayout) {
+    if ((s.type === 'frame' || s.type === 'group') && s.autoLayout) {
       props.push({ key: 'display', value: 'flex' });
       props.push({ key: 'flex-direction', value: s.autoLayout.direction === 'horizontal' ? 'row' : 'column' });
       props.push({ key: 'gap', value: `${s.autoLayout.gap}px` });
@@ -83,7 +83,7 @@ export default function CodeInspector() {
         props.push({ key: 'background', value: s.fill });
       }
     }
-    if ((s.type === 'rect' || s.type === 'frame') && s.cornerRadius) props.push({ key: 'border-radius', value: `${s.cornerRadius}px` });
+    if ((s.type === 'rect' || s.type === 'frame' || s.type === 'group') && s.cornerRadius) props.push({ key: 'border-radius', value: `${s.cornerRadius}px` });
     if (s.stroke && s.stroke !== 'transparent' && s.strokeWidth > 0) {
       props.push({ key: 'border', value: `${s.strokeWidth}px ${s.strokeDash ? 'dashed' : 'solid'} ${s.stroke}` });
     }

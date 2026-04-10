@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function useImage(src: string | undefined): [HTMLImageElement | undefined, 'loading' | 'loaded' | 'error'] {
   const [image, setImage] = useState<HTMLImageElement>();

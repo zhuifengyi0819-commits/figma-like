@@ -2,7 +2,7 @@
 
 import { useEditorStore } from '@/stores/useEditorStore';
 import { ToolType } from '@/lib/types';
-import { MousePointer2, Square, Circle, Type, Minus, Hand, Undo2, Redo2, Star, Triangle, ImagePlus, Frame, PenTool, ChevronDown } from 'lucide-react';
+import { MousePointer2, Square, Circle, Type, Minus, Hand, Undo2, Redo2, Star, Triangle, ImagePlus, Frame, PenTool, ChevronDown, Ruler } from 'lucide-react';
 import { fileToDataUrl, getImageDimensions } from '@/lib/hooks';
 import { useState, useRef, useEffect } from 'react';
 
@@ -27,6 +27,7 @@ const FRAME_PRESETS = [
 
 const tools: { id: ToolType; icon: React.ReactNode; label: string; shortcut: string }[] = [
   { id: 'select', icon: <MousePointer2 size={18} />, label: '选择', shortcut: 'V' },
+  { id: 'measure', icon: <Ruler size={18} />, label: '测量', shortcut: 'M' },
   { id: 'hand', icon: <Hand size={18} />, label: '抓手', shortcut: 'H' },
   { id: 'frame', icon: <Frame size={18} />, label: '画框', shortcut: 'F' },
   { id: 'rect', icon: <Square size={18} />, label: '矩形', shortcut: 'R' },

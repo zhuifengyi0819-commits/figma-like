@@ -6,6 +6,7 @@ import {
   DesignToken, DesignTheme, Interaction, VersionSnapshot,
   DEFAULT_SHAPE_PROPS, DEFAULT_AUTO_LAYOUT, PRESET_TOKENS,
 } from '@/lib/types';
+import { unionAABBs } from '@/lib/measurement';
 
 const MAX_HISTORY = 50;
 
@@ -76,6 +77,9 @@ interface EditorState {
   copyStyle: () => void;
   pasteStyle: () => void;
   reorderShape: (id: string, targetIndex: number) => void;
+
+  groupSelection: () => void;
+  ungroupSelection: () => void;
 
   components: ComponentDef[];
   createComponent: (shapeIds: string[], name: string) => string;
@@ -311,6 +315,67 @@ export const useEditorStore = create<EditorState>()(
           return { pages: ps.pages, shapes: ps.shapes };
         });
       },
+
+      groupSelection: () => {
+        const { selectedIds, shapes } = get();
+        if (selectedIds.length < 2) return;
+        const picked = selectedIds.map(id => shapes.find(s => s.id === id)).filter(Boolean) as Shape[];
+        const p0 = picked[0].parentId;
+        if (!picked.every(s => s.parentId === p0)) return;
+        const union = unionAABBs(picked);
+        if (!union || union.w <= 0 || union.h <= 0) return;
+        get().pushHistory();
+        const gid = uuid();
+        const newGroup: Shape = {
+          ...DEFAULT_SHAPE_PROPS,
+          id: gid,
+          type: 'group',
+          x: union.left,
+          y: union.top,
+          width: union.w,
+          height: union.h,
+          name: 'Group',
+          parentId: p0,
+          clipContent: false,
+          fill: 'transparent',
+          stroke: '#6B6B74',
+          strokeWidth: 1,
+          rotation: 0,
+          visible: true,
+          locked: false,
+        };
+        set(state => {
+          const ap = state.activePageId;
+          const ss = [...pageShapes(state.pages, ap)];
+          const idxs = selectedIds.map(id => ss.findIndex(s => s.id === id)).filter(i => i >= 0);
+          const insertIdx = Math.min(...idxs);
+          ss.splice(insertIdx, 0, newGroup);
+          const next = ss.map(s => selectedIds.includes(s.id) ? { ...s, parentId: gid } : s);
+          const ps = updatePageShapes(state.pages, ap, () => next);
+          return { pages: ps.pages, shapes: ps.shapes, selectedIds: [gid] };
+        });
+      },
+
+      ungroupSelection: () => {
+        const { selectedIds, shapes } = get();
+        if (selectedIds.length !== 1) return;
+        const g = shapes.find(s => s.id === selectedIds[0]);
+        if (!g || g.type !== 'group') return;
+        const gp = g.parentId;
+        const groupId = g.id;
+        const childIds = shapes.filter(s => s.parentId === groupId).map(s => s.id);
+        get().pushHistory();
+        set(state => {
+          const ap = state.activePageId;
+          const ps = updatePageShapes(state.pages, ap, ss =>
+            ss.filter(s => s.id !== groupId).map(sh =>
+              childIds.includes(sh.id) ? { ...sh, parentId: gp } : sh,
+            ),
+          );
+          return { pages: ps.pages, shapes: ps.shapes, selectedIds: childIds.length ? childIds : [] };
+        });
+      },
+
       setCanvasBg: (bg) => set({ canvasBg: bg }),
 
       pushHistory: () => {
@@ -381,10 +446,10 @@ export const useEditorStore = create<EditorState>()(
         const collectChildren = (parentId: string) => {
           shapes.filter(s => s.parentId === parentId).forEach(child => {
             allIds.add(child.id);
-            if (child.type === 'frame') collectChildren(child.id);
+            if (child.type === 'frame' || child.type === 'group') collectChildren(child.id);
           });
         };
-        ids.forEach(id => { const s = shapes.find(sh => sh.id === id); if (s?.type === 'frame') collectChildren(id); });
+        ids.forEach(id => { const s = shapes.find(sh => sh.id === id); if (s?.type === 'frame' || s?.type === 'group') collectChildren(id); });
         get().pushHistory();
         set(state => {
           const ps = updatePageShapes(state.pages, state.activePageId, ss => ss.filter(s => !allIds.has(s.id)));
@@ -445,6 +510,16 @@ export const useEditorStore = create<EditorState>()(
         const groupIds = new Set(ids.map(id => shapes.find(s => s.id === id)?.groupId).filter(Boolean) as string[]);
         const allIds = new Set(ids);
         groupIds.forEach(gid => shapes.filter(s => s.groupId === gid).forEach(s => allIds.add(s.id)));
+        const collectDescendants = (pid: string) => {
+          shapes.filter(s => s.parentId === pid).forEach(ch => {
+            allIds.add(ch.id);
+            if (ch.type === 'frame' || ch.type === 'group') collectDescendants(ch.id);
+          });
+        };
+        ids.forEach(id => {
+          const s = shapes.find(sh => sh.id === id);
+          if (s?.type === 'frame' || s?.type === 'group') collectDescendants(id);
+        });
         const toDupe = shapes.filter(s => allIds.has(s.id));
         if (toDupe.length === 0) return [];
         get().pushHistory();
@@ -761,9 +836,19 @@ export const useEditorStore = create<EditorState>()(
       snapshots: [],
       saveSnapshot: (name) => {
         const id = uuid();
-        set(state => ({
-          snapshots: [...state.snapshots, { id, name, timestamp: Date.now(), shapes: JSON.parse(JSON.stringify(state.shapes)) }],
-        }));
+        const MAX_SNAPSHOTS = 24;
+        let copy: Shape[];
+        try {
+          copy = JSON.parse(JSON.stringify(get().shapes)) as Shape[];
+        } catch {
+          console.error('saveSnapshot: serialization failed');
+          return '';
+        }
+        set(state => {
+          let next = [...state.snapshots, { id, name, timestamp: Date.now(), shapes: copy }];
+          if (next.length > MAX_SNAPSHOTS) next = next.slice(-MAX_SNAPSHOTS);
+          return { snapshots: next };
+        });
         return id;
       },
       restoreSnapshot: (id) => {

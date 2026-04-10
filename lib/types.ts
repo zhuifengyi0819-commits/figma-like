@@ -1,5 +1,5 @@
-export type ShapeType = 'rect' | 'circle' | 'text' | 'line' | 'image' | 'star' | 'arrow' | 'triangle' | 'component' | 'frame' | 'path';
-export type ToolType = 'select' | 'rect' | 'circle' | 'text' | 'line' | 'hand' | 'star' | 'triangle' | 'image' | 'frame' | 'pen';
+export type ShapeType = 'rect' | 'circle' | 'text' | 'line' | 'image' | 'star' | 'arrow' | 'triangle' | 'component' | 'frame' | 'group' | 'path';
+export type ToolType = 'select' | 'rect' | 'circle' | 'text' | 'line' | 'hand' | 'star' | 'triangle' | 'image' | 'frame' | 'pen' | 'measure';
 
 export interface Shadow {
   color: string;
@@ -132,6 +132,10 @@ export interface Shape {
 
   // Layout grid (frames only)
   layoutGrids?: LayoutGrid[];
+
+  /** 预留：蒙版 / 布尔（尚无渲染逻辑） */
+  maskSourceId?: string;
+  booleanOp?: 'union' | 'subtract' | 'intersect' | 'exclude';
 
   fills?: Fill[];
   shadows?: Shadow[];

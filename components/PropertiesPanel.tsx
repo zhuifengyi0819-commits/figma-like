@@ -65,7 +65,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function InteractionEditor({ shape }: { shape: Shape }) {
   const { addInteraction, removeInteraction, updateInteraction, shapes, pages } = useEditorStore();
   const interactions = shape.interactions || [];
-  const allFrames = pages.flatMap(p => p.shapes.filter(s => s.type === 'frame' && !s.parentId));
+  const allFrames = pages.flatMap(p => p.shapes.filter(s => (s.type === 'frame' || s.type === 'group') && !s.parentId));
 
   const handleAdd = () => {
     addInteraction(shape.id, {
@@ -263,7 +263,7 @@ export default function PropertiesPanel() {
   const selected = shapes.filter(s => selectedIds.includes(s.id));
   const single = selected.length === 1 ? selected[0] : null;
   const isLine = single?.type === 'line' || single?.type === 'arrow';
-  const isFrame = single?.type === 'frame';
+  const isFrame = single?.type === 'frame' || single?.type === 'group';
   const isPath = single?.type === 'path';
 
   const historyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -752,7 +752,7 @@ export default function PropertiesPanel() {
                   <label className="text-[10px] text-[var(--text-tertiary)] w-16 flex-shrink-0">类型</label>
                   <select
                     value={single.blur?.type || 'layer'}
-                    title="模糊类型"
+                    title="模糊类型（背景模糊在画布中为图层高斯模糊的近似）"
                     onChange={e => update({ blur: { type: e.target.value as BlurEffect['type'], radius: single.blur?.radius || 0 } })}
                     className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
                   >
@@ -888,7 +888,8 @@ export default function PropertiesPanel() {
                     const w = single.width || (single.radius ? single.radius * 2 : 200);
                     const h = single.height || (single.radius ? single.radius * 2 : 200);
                     const svg = shapesToSvg([single], { width: w, height: h });
-                    downloadSvg(svg, `${single.name}.svg`);
+                    const safe = (single.name || 'export').replace(/[/\\?%*:|"<>]/g, '_').slice(0, 120);
+                    downloadSvg(svg, `${safe}.svg`);
                   }}
                   className="flex items-center justify-center gap-1 py-1.5 text-[10px] text-[var(--text-secondary)] hover:text-[var(--accent)] bg-[var(--bg-elevated)] rounded transition-colors"
                 >
@@ -905,14 +906,16 @@ export default function PropertiesPanel() {
                     const img = new window.Image();
                     const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
                     const url = URL.createObjectURL(blob);
+                    const safe = (single.name || 'export').replace(/[/\\?%*:|"<>]/g, '_').slice(0, 120);
                     img.onload = () => {
                       ctx?.drawImage(img, 0, 0, w * 2, h * 2);
                       const a = document.createElement('a');
                       a.href = canvas.toDataURL('image/png');
-                      a.download = `${single.name}@2x.png`;
+                      a.download = `${safe}@2x.png`;
                       a.click();
                       URL.revokeObjectURL(url);
                     };
+                    img.onerror = () => { URL.revokeObjectURL(url); console.error('PNG rasterize failed'); };
                     img.src = url;
                   }}
                   className="flex items-center justify-center gap-1 py-1.5 text-[10px] text-[var(--text-secondary)] hover:text-[var(--accent)] bg-[var(--bg-elevated)] rounded transition-colors"
@@ -922,7 +925,7 @@ export default function PropertiesPanel() {
                 <button
                   onClick={() => {
                     const css = shapeToCss(single);
-                    navigator.clipboard.writeText(css);
+                    void navigator.clipboard.writeText(css).catch(() => console.error('Clipboard unavailable'));
                   }}
                   className="flex items-center justify-center gap-1 py-1.5 text-[10px] text-[var(--text-secondary)] hover:text-[var(--accent)] bg-[var(--bg-elevated)] rounded transition-colors"
                   title="复制CSS到剪贴板"

@@ -5,6 +5,7 @@ import { Download, Upload, Grid3X3, Keyboard, PaintBucket, Image, FileCode2, Fil
 import { useCallback, useRef, useState } from 'react';
 import Konva from 'konva';
 import { shapesToSvg, downloadSvg } from '@/lib/svgExport';
+import { sanitizeImportedShapes } from '@/lib/sanitizeImportedShapes';
 
 export default function Header() {
   const { shapes, clearCanvas, canvasZoom, setCanvasZoom, setCanvasPan, setShowHelp, canvasBg, setCanvasBg, pages, activePageId, setPrototypeMode, snapshots, saveSnapshot, restoreSnapshot, deleteSnapshot } = useEditorStore();
@@ -106,9 +107,12 @@ export default function Header() {
       try {
         const text = await file.text();
         const data = JSON.parse(text);
-        if (Array.isArray(data)) {
-          useEditorStore.getState()._setPageShapes(data);
+        const shapes = sanitizeImportedShapes(data);
+        if (shapes) {
+          useEditorStore.getState()._setPageShapes(shapes);
           useEditorStore.setState({ selectedIds: [] });
+        } else {
+          console.error('Import rejected: expected a JSON array of valid shapes');
         }
       } catch (err) { console.error('Failed to import:', err); }
     };

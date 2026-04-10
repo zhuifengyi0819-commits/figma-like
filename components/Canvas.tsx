@@ -1,7 +1,15 @@
 import { Stage, Layer, Rect, Circle, Text, Line, Transformer, Star, Arrow, Image as KonvaImage, RegularPolygon, Group, Path } from 'react-konva';
 import { useEditorStore } from '@/stores/useEditorStore';
 import { Shape, Gradient, CANVAS_WIDTH, CANVAS_HEIGHT, BlendMode } from '@/lib/types';
-import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import {
+  getShapeAABB,
+  measureGapBetweenAABBs,
+  computeParentPaddingSegments,
+  computeAutoLayoutOverlay,
+  hitTestShapeAtPoint,
+  isLayoutContainer,
+} from '@/lib/measurement';
+import { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useImage, fileToDataUrl, getImageDimensions } from '@/lib/hooks';
 import Konva from 'konva';
 
@@ -27,12 +35,12 @@ function gradientToKonvaFill(g: Gradient, w: number, h: number): Record<string, 
 }
 
 function getShapeBoundsForSnap(s: Shape) {
+  const b = getShapeAABB(s);
+  const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
   if (s.type === 'circle' || s.type === 'star' || s.type === 'triangle') {
-    const r = s.radius || 50;
-    return { left: s.x - r, top: s.y - r, right: s.x + r, bottom: s.y + r, cx: s.x, cy: s.y };
+    return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, cx: s.x, cy: s.y };
   }
-  const w = s.width || 100, h = s.height || 100;
-  return { left: s.x, top: s.y, right: s.x + w, bottom: s.y + h, cx: s.x + w / 2, cy: s.y + h / 2 };
+  return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, cx, cy };
 }
 
 function pathPointsToSvg(shape: Shape): string {
@@ -67,11 +75,27 @@ function applyEffects(props: Record<string, unknown>, shape: Shape) {
   if (shape.blendMode && shape.blendMode !== 'normal') {
     props.globalCompositeOperation = BLEND_MODE_MAP[shape.blendMode] || 'source-over';
   }
-  if (shape.blur?.type === 'layer' && shape.blur.radius > 0) {
+  // Konva has no true backdrop blur; both modes use Gaussian blur on the cached layer.
+  if (shape.blur && shape.blur.radius > 0) {
     const existing = (props.filters as unknown[]) || [];
     props.filters = [...existing, Konva.Filters.Blur];
     props.blurRadius = shape.blur.radius;
   }
+}
+
+function useKonvaBlurCache(nodeRef: React.RefObject<Konva.Node | null>, blurRadius: number, ...cacheDeps: unknown[]) {
+  useLayoutEffect(() => {
+    const n = nodeRef.current;
+    if (!n) return;
+    if (blurRadius > 0) {
+      const pad = Math.ceil(blurRadius * 2);
+      n.cache({ offset: pad });
+      n.getLayer()?.batchDraw();
+    } else {
+      n.clearCache();
+    }
+    return () => { n.clearCache(); };
+  }, [blurRadius, ...cacheDeps]);
 }
 
 function ImageShape({ shape, commonProps }: { shape: Shape; commonProps: Record<string, unknown> }) {
@@ -110,7 +134,11 @@ function ShapeRenderer({
     return { shadowColor: s.color, shadowBlur: s.blur, shadowOffsetX: s.offsetX, shadowOffsetY: s.offsetY, shadowOpacity: 1 };
   }, [shape.shadow, shape.shadows]);
 
+  const effectProps: Record<string, unknown> = {};
+  applyEffects(effectProps, shape);
+
   const commonProps: Record<string, unknown> = {
+    ...effectProps,
     id: shape.id,
     ref: shapeRef as React.RefObject<never>,
     x: shape.x, y: shape.y,
@@ -132,7 +160,8 @@ function ShapeRenderer({
     ...shadowProps,
   };
 
-  applyEffects(commonProps, shape);
+  const blurR = shape.blur?.radius ?? 0;
+  useKonvaBlurCache(shapeRef as React.RefObject<Konva.Node | null>, blurR, shape.id, shape.width, shape.height, shape.radius, shape.type, (shape.points || []).length, (shape.pathPoints || []).length);
 
   const selStroke = isSelected ? '#D4A853' : shape.stroke;
   const selStrokeW = isSelected ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth;
@@ -185,6 +214,8 @@ function ShapeRenderer({
     case 'image':
     case 'component':
       return <ImageShape shape={shape} commonProps={{ ...commonProps, stroke: isSelected ? '#D4A853' : undefined, strokeWidth: isSelected ? 2 : 0 }} />;
+    case 'group':
+      return null;
     default:
       return null;
   }
@@ -204,12 +235,26 @@ function FrameRenderer({
   onTransformEnd: (id: string, node: Konva.Node) => void;
   onDblClickText: (id: string) => void;
 }) {
+  const groupRef = useRef<Konva.Group>(null);
   const children = allShapes.filter(s => s.parentId === frame.id);
   const fw = frame.width || 200, fh = frame.height || 200;
   const isSelected = selectedIds.includes(frame.id);
 
+  const frameShadowProps = useMemo(() => {
+    const shadows = frame.shadows || (frame.shadow ? [frame.shadow] : []);
+    if (shadows.length === 0) return {};
+    const s = shadows[0];
+    return { shadowColor: s.color, shadowBlur: s.blur, shadowOffsetX: s.offsetX, shadowOffsetY: s.offsetY, shadowOpacity: 1 };
+  }, [frame.shadow, frame.shadows]);
+
+  const groupEffects: Record<string, unknown> = {};
+  applyEffects(groupEffects, frame);
+  const blurR = frame.blur?.radius ?? 0;
+  useKonvaBlurCache(groupRef as React.RefObject<Konva.Node | null>, blurR, frame.id, fw, fh, frame.blendMode);
+
   return (
     <Group
+      ref={groupRef}
       id={frame.id}
       x={frame.x}
       y={frame.y}
@@ -219,15 +264,16 @@ function FrameRenderer({
       draggable={!frame.locked}
       scaleX={frame.scaleX ?? 1}
       scaleY={frame.scaleY ?? 1}
-      clipFunc={frame.clipContent !== false ? (ctx: Konva.Context) => {
+      clipFunc={(frame.type === 'group' ? frame.clipContent === true : frame.clipContent !== false) ? (ctx: Konva.Context) => {
         ctx.rect(0, 0, fw, fh);
       } : undefined}
       onClick={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(frame.id, e.evt.shiftKey); }}
       onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => onDragEnd(frame.id, e.target.x(), e.target.y())}
-      onTransformEnd={() => {
-        const node = (e: unknown) => e;
-        void node;
+      onTransformEnd={(e: Konva.KonvaEventObject<Event>) => {
+        e.cancelBubble = true;
+        onTransformEnd(frame.id, e.target);
       }}
+      {...groupEffects}
     >
       {/* Frame background */}
       <Rect
@@ -239,6 +285,7 @@ function FrameRenderer({
         cornerRadius={frame.cornerRadius || 0}
         dash={frame.strokeDash}
         listening={false}
+        {...frameShadowProps}
       />
       {/* Frame label */}
       {isSelected && (
@@ -253,7 +300,7 @@ function FrameRenderer({
       )}
       {/* Children — positions relative to frame */}
       {children.map(child => {
-        if (child.type === 'frame') {
+        if (child.type === 'frame' || child.type === 'group') {
           return (
             <FrameRenderer
               key={child.id}
@@ -283,8 +330,8 @@ function FrameRenderer({
           />
         );
       })}
-      {/* Layout Grid overlay */}
-      {isSelected && frame.layoutGrids?.filter(g => g.visible).map((g, gi) => {
+      {/* Layout Grid overlay — flat list so Konva/React children stay valid */}
+      {isSelected && frame.layoutGrids?.filter(g => g.visible).flatMap((g, gi) => {
         const rects: React.ReactNode[] = [];
         if (g.type === 'columns' || g.type === 'grid') {
           const totalGutter = (g.count - 1) * g.gutterSize;
@@ -341,12 +388,31 @@ export default function Canvas({ width, height }: CanvasProps) {
   const [penDragging, setPenDragging] = useState(false);
   const penDragStart = useRef<{ x: number; y: number } | null>(null);
 
-  // Measure tool state (Alt-hover)
-  const [measureLines, setMeasureLines] = useState<{ x1: number; y1: number; x2: number; y2: number; dist: number }[]>([]);
-  const altPressed = useRef(false);
+  // Measure: Alt+hover or 测量工具 + 单选作为参考
+  const [measureLines, setMeasureLines] = useState<{ x1: number; y1: number; x2: number; y2: number; dist: number; label?: string }[]>([]);
+  const measurePointerRef = useRef({ x: 0, y: 0 });
+  const pointerModsRef = useRef({ altKey: false });
+  const measureRafScheduled = useRef(false);
 
   // Top-level shapes (no parentId) — frames and loose shapes
   const topLevelShapes = useMemo(() => shapes.filter(s => !s.parentId), [shapes]);
+
+  const parentPaddingSegs = useMemo(() => {
+    if (selectedIds.length !== 1) return [] as ReturnType<typeof computeParentPaddingSegments>;
+    const sel = shapes.find(s => s.id === selectedIds[0]);
+    if (!sel?.parentId) return [];
+    const parent = shapes.find(s => s.id === sel.parentId);
+    if (!parent || !isLayoutContainer(parent)) return [];
+    return computeParentPaddingSegments(sel, parent);
+  }, [shapes, selectedIds]);
+
+  const autoLayoutGuide = useMemo(() => {
+    if (selectedIds.length !== 1) return null;
+    const sel = shapes.find(s => s.id === selectedIds[0]);
+    if (!sel || !isLayoutContainer(sel) || !sel.autoLayout) return null;
+    const ch = shapes.filter(s => s.parentId === sel.id);
+    return computeAutoLayoutOverlay(sel, ch);
+  }, [shapes, selectedIds]);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
@@ -386,6 +452,32 @@ export default function Canvas({ width, height }: CanvasProps) {
     return () => window.removeEventListener('paste', handlePaste);
   }, [addShape]);
 
+  const finishPenPath = useCallback((close: boolean) => {
+    if (penPoints.length < 2) { setPenPoints([]); setPenPreview(null); return; }
+    const pathPts = penPoints.map(p => ({
+      x: p.x, y: p.y,
+      ...(p.cp1 ? { cp1: p.cp1 } : {}),
+      ...(p.cp2 ? { cp2: p.cp2 } : {}),
+    }));
+    const id = addShape({
+      type: 'path',
+      x: 0, y: 0,
+      pathPoints: pathPts,
+      closePath: close,
+      fill: close ? '#4A4A52' : 'transparent',
+      stroke: '#D4A853',
+      strokeWidth: 2,
+      opacity: 1, rotation: 0, visible: true, locked: false,
+      name: '',
+    });
+    setSelectedIds([id]);
+    setPenPoints([]);
+    setPenPreview(null);
+    setPenDragging(false);
+    penDragStart.current = null;
+    setActiveTool('select');
+  }, [penPoints, addShape, setSelectedIds, setActiveTool]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -406,6 +498,8 @@ export default function Canvas({ width, height }: CanvasProps) {
       else if (mod && e.key === 'd' && !e.altKey) { e.preventDefault(); if (selectedIds.length > 0) duplicateShapes(selectedIds); }
       else if (mod && e.altKey && e.key === 'c') { e.preventDefault(); copyStyle(); }
       else if (mod && e.altKey && e.key === 'v') { e.preventDefault(); pasteStyle(); }
+      else if (mod && e.key === 'g' && e.shiftKey) { e.preventDefault(); useEditorStore.getState().ungroupSelection(); }
+      else if (mod && e.key === 'g' && !e.shiftKey) { e.preventDefault(); useEditorStore.getState().groupSelection(); }
       else if (mod && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if ((mod && e.key === 'z' && e.shiftKey) || (mod && e.key === 'y')) { e.preventDefault(); redo(); }
       else if (mod && e.key === '0') { e.preventDefault(); setCanvasZoom(1); setCanvasPan({ x: 0, y: 0 }); }
@@ -419,31 +513,35 @@ export default function Canvas({ width, height }: CanvasProps) {
       else if (e.key === 'h' || e.key === 'H') setActiveTool('hand');
       else if (e.key === 'f' || e.key === 'F') setActiveTool('frame');
       else if (e.key === 'p' || e.key === 'P') setActiveTool('pen');
+      else if (e.key === 'm' || e.key === 'M') setActiveTool('measure');
       else if (e.key === 'Enter' && penPoints.length >= 2) {
         finishPenPath(false);
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') { spacePressed.current = false; if (stageRef.current && !isPanning.current) stageRef.current.container().style.cursor = 'default'; }
-      if (e.key === 'Alt') { altPressed.current = false; setMeasureLines([]); }
+      if (e.key === 'Alt') setMeasureLines([]);
     };
-    const handleAltDown = (e: KeyboardEvent) => { if (e.key === 'Alt') altPressed.current = true; };
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keydown', handleAltDown);
     window.addEventListener('keyup', handleKeyUp);
-    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keydown', handleAltDown); window.removeEventListener('keyup', handleKeyUp); };
-  }, [selectedIds, shapes, deleteShapes, clearSelection, setSelectedIds, duplicateShapes, undo, redo, setCanvasZoom, setCanvasPan, setActiveTool, setShowHelp, width, height, penPoints, copyStyle, pasteStyle]);
+    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); };
+  }, [selectedIds, shapes, deleteShapes, clearSelection, setSelectedIds, duplicateShapes, undo, redo, setCanvasZoom, setCanvasPan, setActiveTool, setShowHelp, width, height, penPoints, copyStyle, pasteStyle, finishPenPath]);
 
   useEffect(() => {
     if (!transformerRef.current || !stageRef.current) return;
     const stage = stageRef.current;
+    if (activeTool === 'measure') {
+      transformerRef.current.nodes([]);
+      transformerRef.current.getLayer()?.batchDraw();
+      return;
+    }
     const nodes = selectedIds.map(id => stage.findOne(`#${id}`)).filter(Boolean) as Konva.Node[];
     transformerRef.current.nodes(nodes);
     transformerRef.current.getLayer()?.batchDraw();
-  }, [selectedIds, shapes]);
+  }, [selectedIds, shapes, activeTool]);
 
   const handleSelect = useCallback((id: string, add: boolean) => {
-    if (activeTool !== 'select') return;
+    if (activeTool !== 'select' && activeTool !== 'measure') return;
     const shape = shapes.find(s => s.id === id);
     const groupIds = shape?.groupId
       ? shapes.filter(s => s.groupId === shape.groupId).map(s => s.id)
@@ -472,7 +570,7 @@ export default function Canvas({ width, height }: CanvasProps) {
     }
 
     // Move children of frames
-    if (shape.type === 'frame') {
+    if (shape.type === 'frame' || shape.type === 'group') {
       const stage = stageRef.current; if (!stage) return;
       currentShapes.filter(s => s.parentId === shape.id).forEach(s => {
         const node = stage.findOne(`#${s.id}`);
@@ -508,8 +606,8 @@ export default function Canvas({ width, height }: CanvasProps) {
     pushHistory();
     if (shape?.groupId) {
       moveGroupShapes(shape.groupId, id, x, y);
-    } else if (shape?.type === 'frame') {
-      // Move frame and all its children
+    } else if (shape?.type === 'frame' || shape?.type === 'group') {
+      // Move frame/group and all its children
       const dx = x - shape.x, dy = y - shape.y;
       const childIds = currentShapes.filter(s => s.parentId === id).map(s => s.id);
       const updates = new Map<string, Partial<Shape>>();
@@ -536,15 +634,15 @@ export default function Canvas({ width, height }: CanvasProps) {
     const newFlipY = (scaleY < 0 ? -1 : 1) * prevFlipY;
     node.scaleX(newFlipX); node.scaleY(newFlipY);
     const u: Partial<Shape> = { x: node.x(), y: node.y(), rotation: node.rotation(), scaleX: newFlipX, scaleY: newFlipY };
-    if (shape.type === 'rect' || shape.type === 'image' || shape.type === 'component' || shape.type === 'frame') {
+    if (shape.type === 'rect' || shape.type === 'image' || shape.type === 'component' || shape.type === 'frame' || shape.type === 'group') {
       u.width = Math.max(10, (shape.width || 100) * absX);
       u.height = Math.max(10, (shape.height || 100) * absY);
     }
     else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle') { u.radius = Math.max(5, (shape.radius || 50) * Math.max(absX, absY)); if (shape.innerRadius) u.innerRadius = Math.max(5, shape.innerRadius * Math.max(absX, absY)); }
     else if (shape.type === 'text') { u.fontSize = Math.max(8, (shape.fontSize || 24) * absY); u.width = (shape.width || 200) * absX; }
     updateShape(id, u);
-    // Apply constraints for frame children
-    if (shape.type === 'frame') {
+    // Apply constraints for frame/group children
+    if (shape.type === 'frame' || shape.type === 'group') {
       const oldW = shape.width || 100, oldH = shape.height || 100;
       const newW = u.width || oldW, newH = u.height || oldH;
       if (newW !== oldW || newH !== oldH) {
@@ -564,33 +662,6 @@ export default function Canvas({ width, height }: CanvasProps) {
     const pos = stage.getPointerPosition(); if (!pos) return { x: 0, y: 0 };
     return { x: (pos.x - canvasPan.x) / canvasZoom, y: (pos.y - canvasPan.y) / canvasZoom };
   }, [canvasZoom, canvasPan]);
-
-  // Pen tool: finish path — now carries Bezier control points
-  const finishPenPath = useCallback((close: boolean) => {
-    if (penPoints.length < 2) { setPenPoints([]); setPenPreview(null); return; }
-    const pathPts = penPoints.map(p => ({
-      x: p.x, y: p.y,
-      ...(p.cp1 ? { cp1: p.cp1 } : {}),
-      ...(p.cp2 ? { cp2: p.cp2 } : {}),
-    }));
-    const id = addShape({
-      type: 'path',
-      x: 0, y: 0,
-      pathPoints: pathPts,
-      closePath: close,
-      fill: close ? '#4A4A52' : 'transparent',
-      stroke: '#D4A853',
-      strokeWidth: 2,
-      opacity: 1, rotation: 0, visible: true, locked: false,
-      name: '',
-    });
-    setSelectedIds([id]);
-    setPenPoints([]);
-    setPenPreview(null);
-    setPenDragging(false);
-    penDragStart.current = null;
-    setActiveTool('select');
-  }, [penPoints, addShape, setSelectedIds, setActiveTool]);
 
   const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
@@ -687,47 +758,50 @@ export default function Canvas({ width, height }: CanvasProps) {
       return;
     }
     if (activeTool === 'hand' || spacePressed.current) stage.container().style.cursor = 'grab';
+    else if (activeTool === 'measure') stage.container().style.cursor = 'crosshair';
     else if (activeTool !== 'select') stage.container().style.cursor = 'crosshair';
     else stage.container().style.cursor = e.target !== stage ? 'move' : 'default';
 
-    if (altPressed.current && selectedIds.length === 1) {
-      const sel = shapes.find(s => s.id === selectedIds[0]);
-      if (sel) {
-        const pt = getCanvasPoint();
-        const hover = shapes.find(s => {
-          if (s.id === sel.id || !s.visible) return false;
-          const bx = s.type === 'circle' || s.type === 'star' || s.type === 'triangle' ? s.x - (s.radius || 50) : s.x;
-          const by = s.type === 'circle' || s.type === 'star' || s.type === 'triangle' ? s.y - (s.radius || 50) : s.y;
-          const bw = s.type === 'circle' || s.type === 'star' || s.type === 'triangle' ? (s.radius || 50) * 2 : (s.width || 100);
-          const bh = s.type === 'circle' || s.type === 'star' || s.type === 'triangle' ? (s.radius || 50) * 2 : (s.height || 100);
-          return pt.x >= bx && pt.x <= bx + bw && pt.y >= by && pt.y <= by + bh;
+    pointerModsRef.current = { altKey: e.evt.altKey };
+    measurePointerRef.current = getCanvasPoint();
+    const altOn = e.evt.altKey;
+    const wantGapMeasure = selectedIds.length === 1 && (altOn || activeTool === 'measure');
+    if (wantGapMeasure) {
+      if (!measureRafScheduled.current) {
+        measureRafScheduled.current = true;
+        requestAnimationFrame(() => {
+          measureRafScheduled.current = false;
+          const pt = measurePointerRef.current;
+          const st = useEditorStore.getState();
+          const refId = st.selectedIds[0];
+          const tool = st.activeTool;
+          const useGap = st.selectedIds.length === 1 && (pointerModsRef.current.altKey || tool === 'measure');
+          if (!useGap || !refId) {
+            setMeasureLines([]);
+            return;
+          }
+          const refShape = st.shapes.find(s => s.id === refId);
+          if (!refShape) {
+            setMeasureLines([]);
+            return;
+          }
+          const hover = hitTestShapeAtPoint(
+            st.shapes.filter(s => s.id !== refId && s.visible && !s.locked),
+            pt.x,
+            pt.y,
+          );
+          if (!hover) {
+            setMeasureLines([]);
+            return;
+          }
+          const segs = measureGapBetweenAABBs(getShapeAABB(refShape), getShapeAABB(hover));
+          setMeasureLines(segs.map(s => ({ ...s, label: String(s.dist) })));
         });
-        if (hover) {
-          const getBounds = (s: Shape) => {
-            if (s.type === 'circle' || s.type === 'star' || s.type === 'triangle') {
-              const r = s.radius || 50; return { x: s.x - r, y: s.y - r, w: r * 2, h: r * 2 };
-            }
-            return { x: s.x, y: s.y, w: s.width || 100, h: s.height || 100 };
-          };
-          const a = getBounds(sel), b = getBounds(hover);
-          const lines: typeof measureLines = [];
-          const gapLeft = b.x - (a.x + a.w);
-          const gapRight = a.x - (b.x + b.w);
-          const gapTop = b.y - (a.y + a.h);
-          const gapBottom = a.y - (b.y + b.h);
-          const cy = Math.max(a.y, b.y) + (Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)) / 2;
-          const cx = Math.max(a.x, b.x) + (Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) / 2;
-          if (gapLeft > 0) lines.push({ x1: a.x + a.w, y1: cy, x2: b.x, y2: cy, dist: Math.round(gapLeft) });
-          else if (gapRight > 0) lines.push({ x1: b.x + b.w, y1: cy, x2: a.x, y2: cy, dist: Math.round(gapRight) });
-          if (gapTop > 0) lines.push({ x1: cx, y1: a.y + a.h, x2: cx, y2: b.y, dist: Math.round(gapTop) });
-          else if (gapBottom > 0) lines.push({ x1: cx, y1: b.y + b.h, x2: cx, y2: a.y, dist: Math.round(gapBottom) });
-          setMeasureLines(lines);
-        } else { setMeasureLines([]); }
       }
-    } else if (measureLines.length > 0 && !altPressed.current) {
+    } else {
       setMeasureLines([]);
     }
-  }, [canvasPan, setCanvasPan, isDrawing, drawStart, getCanvasPoint, activeTool, penPoints, penDragging, selectedIds, shapes, measureLines.length]);
+  }, [canvasPan, setCanvasPan, isDrawing, drawStart, getCanvasPoint, activeTool, penPoints, penDragging, selectedIds, shapes]);
 
   const handleMouseUp = useCallback(() => {
     if (penDragging) {
@@ -747,11 +821,8 @@ export default function Canvas({ width, height }: CanvasProps) {
         const currentShapes = useEditorStore.getState().shapes;
         const found = currentShapes.filter(s => {
           if (!s.visible || s.locked) return false;
-          let sx = s.x, sy = s.y, sw = s.width || 100, sh = s.height || 100;
-          if (s.type === 'circle' || s.type === 'star' || s.type === 'triangle') {
-            const r = s.radius || 50; sx = s.x - r; sy = s.y - r; sw = r * 2; sh = r * 2;
-          }
-          return sx < x + w && sx + sw > x && sy < y + h && sy + sh > y;
+          const b = getShapeAABB(s);
+          return b.left < x + w && b.right > x && b.top < y + h && b.bottom > y;
         });
         if (found.length > 0) { setSelectedIds(found.map(s => s.id)); rubberBandUsed.current = true; }
       }
@@ -805,7 +876,7 @@ export default function Canvas({ width, height }: CanvasProps) {
     return dots;
   }, []);
 
-  const cursor = activeTool === 'hand' || spacePressed.current ? 'grab' : activeTool === 'pen' ? 'crosshair' : activeTool !== 'select' ? 'crosshair' : 'default';
+  const cursor = activeTool === 'hand' || spacePressed.current ? 'grab' : activeTool === 'pen' || activeTool === 'measure' ? 'crosshair' : activeTool !== 'select' ? 'crosshair' : 'default';
 
   const editingShape = editingTextId ? shapes.find(s => s.id === editingTextId) : null;
   const textareaStyle = editingShape ? {
@@ -854,7 +925,7 @@ export default function Canvas({ width, height }: CanvasProps) {
         </Layer>
         <Layer>
           {topLevelShapes.map(shape => {
-            if (shape.type === 'frame') {
+            if (shape.type === 'frame' || shape.type === 'group') {
               return (
                 <FrameRenderer
                   key={shape.id}
@@ -917,13 +988,44 @@ export default function Canvas({ width, height }: CanvasProps) {
               <Line key={`gy-${i}`} points={[-5000, guide.y, 10000, guide.y]} stroke="#FF6B6B" strokeWidth={0.5} dash={[4, 4]} listening={false} />
             ) : null
           )}
-          {/* Measure lines (Alt-hover) */}
+          {/* 相对父容器四边距离（padding 感） */}
+          {parentPaddingSegs.map((m, i) => (
+            <Group key={`pp-${i}`} listening={false}>
+              <Line points={[m.x1, m.y1, m.x2, m.y2]} stroke="#2DD4BF" strokeWidth={1} listening={false} />
+              <Line points={[m.x1, m.y1 - 3, m.x1, m.y1 + 3]} stroke="#2DD4BF" strokeWidth={1} listening={false} />
+              <Line points={[m.x2, m.y2 - 3, m.x2, m.y2 + 3]} stroke="#2DD4BF" strokeWidth={1} listening={false} />
+              <Text x={(m.x1 + m.x2) / 2 - 14} y={(m.y1 + m.y2) / 2 - 12} text={m.label || String(m.dist)} fontSize={9} fill="#2DD4BF" listening={false} />
+            </Group>
+          ))}
+          {/* Auto Layout 内边距框 + 子项 gap */}
+          {autoLayoutGuide && (
+            <>
+              <Rect
+                x={autoLayoutGuide.paddingRect.x}
+                y={autoLayoutGuide.paddingRect.y}
+                width={autoLayoutGuide.paddingRect.w}
+                height={autoLayoutGuide.paddingRect.h}
+                stroke="#A78BFA"
+                strokeWidth={1}
+                dash={[4, 4]}
+                fill="transparent"
+                listening={false}
+              />
+              {autoLayoutGuide.gaps.map((m, i) => (
+                <Group key={`alg-${i}`} listening={false}>
+                  <Line points={[m.x1, m.y1, m.x2, m.y2]} stroke="#FBBF24" strokeWidth={1} listening={false} />
+                  <Text x={(m.x1 + m.x2) / 2 - 18} y={(m.y1 + m.y2) / 2 - 12} text={m.label || String(m.dist)} fontSize={9} fill="#FBBF24" listening={false} />
+                </Group>
+              ))}
+            </>
+          )}
+          {/* 对象间距：Alt 悬停 或 测量工具 */}
           {measureLines.map((m, i) => (
             <Group key={`meas-${i}`} listening={false}>
               <Line points={[m.x1, m.y1, m.x2, m.y2]} stroke="#FF6B6B" strokeWidth={1} listening={false} />
               <Line points={[m.x1, m.y1 - 4, m.x1, m.y1 + 4]} stroke="#FF6B6B" strokeWidth={1} listening={false} />
               <Line points={[m.x2, m.y2 - 4, m.x2, m.y2 + 4]} stroke="#FF6B6B" strokeWidth={1} listening={false} />
-              <Text x={(m.x1 + m.x2) / 2 - 10} y={(m.y1 + m.y2) / 2 - 12} text={`${m.dist}`} fontSize={10} fill="#FF6B6B" listening={false} padding={2} />
+              <Text x={(m.x1 + m.x2) / 2 - 10} y={(m.y1 + m.y2) / 2 - 12} text={m.label ?? `${m.dist}`} fontSize={10} fill="#FF6B6B" listening={false} padding={2} />
             </Group>
           ))}
           {rubberBand && (rubberBand.w > 2 || rubberBand.h > 2) && (
@@ -971,6 +1073,11 @@ export default function Canvas({ width, height }: CanvasProps) {
       {activeTool === 'pen' && penPoints.length > 0 && (
         <div className="absolute top-4 right-4 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg text-xs text-[var(--text-secondary)] z-10">
           点击添加锚点 · 拖拽创建曲线手柄 · 点击起点闭合 · Enter 完成 · Esc 取消
+        </div>
+      )}
+      {activeTool === 'measure' && (
+        <div className="absolute top-4 right-4 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg text-xs text-[var(--text-secondary)] z-10 max-w-xs">
+          先选中一个对象作为参考，移动鼠标到另一对象上查看间距。也可在选择工具下按住 Alt 悬停。子对象选中时显示相对父 Frame/组的四边距离；带 Auto Layout 的容器显示内边距与 gap。
         </div>
       )}
 

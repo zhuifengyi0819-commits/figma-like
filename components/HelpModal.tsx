@@ -7,6 +7,7 @@ import { useEffect } from 'react';
 const shortcuts = [
   { category: '工具', items: [
     { keys: ['V'], desc: '选择工具' },
+    { keys: ['M'], desc: '测量工具（悬停测距，无需按 Alt）' },
     { keys: ['H'], desc: '抓手工具' },
     { keys: ['R'], desc: '矩形工具' },
     { keys: ['O'], desc: '圆形工具' },
@@ -21,6 +22,9 @@ const shortcuts = [
   ]},
   { category: '编辑', items: [
     { keys: ['⌘', 'A'], desc: '全选' },
+    { keys: ['⌘', 'G'], desc: '编组（同父级、≥2 选区）' },
+    { keys: ['⌘', '⇧', 'G'], desc: '取消编组' },
+    { keys: ['Alt', '悬停'], desc: '测两对象间距（选择工具下单选）' },
     { keys: ['⌘', 'D'], desc: '复制图形' },
     { keys: ['⌘', 'Z'], desc: '撤销' },
     { keys: ['⌘', '⇧', 'Z'], desc: '重做' },
