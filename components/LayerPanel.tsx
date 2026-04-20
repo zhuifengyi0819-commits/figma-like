@@ -2,7 +2,7 @@
 
 import { useEditorStore } from '@/stores/useEditorStore';
 import { Shape } from '@/lib/types';
-import { Eye, EyeOff, Lock, Unlock, Trash2, Copy, Star, ImageIcon, Triangle, ArrowRight, Type, Minus, Square, Circle, Component, Layers, Frame, PenTool, ChevronRight, Search, X, Group } from 'lucide-react';
+import { Eye, EyeOff, Lock, Unlock, Trash2, Copy, Star, ImageIcon, Triangle, ArrowRight, Type, Minus, Square, Circle, Component, Layers, Frame, PenTool, ChevronRight, ChevronsDown, ChevronsUp, Search, X, Group } from 'lucide-react';
 import { useCallback, useState, useRef, useEffect, useMemo, DragEvent } from 'react';
 
 const typeIconMap: Record<string, React.ReactNode> = {
@@ -139,12 +139,26 @@ function buildTree(shapes: Shape[]): TreeNode[] {
   // Also handle groupId-based grouping for non-frame groups
   const groupedRoots: TreeNode[] = [];
   const seenGroups = new Set<string>();
+  const usedAsGroupMember = new Set<string>();
+
   for (const node of roots) {
     if (node.shape.groupId) {
+      // Only apply groupId grouping for TOP-LEVEL shapes (no parentId).
+      // Shapes that already have a parentId are correctly nested via parentId
+      // and must NOT be re-parented by groupId logic.
+      if (node.shape.parentId) {
+        groupedRoots.push(node);
+        continue;
+      }
+      if (usedAsGroupMember.has(node.shape.id)) continue;
       if (seenGroups.has(node.shape.groupId)) continue;
       seenGroups.add(node.shape.groupId);
       const groupMembers = roots.filter(n => n.shape.groupId === node.shape.groupId);
-      groupedRoots.push({ shape: { ...node.shape, name: `⊟ 组`, type: 'component' as Shape['type'] }, children: groupMembers.map(m => ({ ...m, children: m.children })) });
+      groupMembers.forEach(m => usedAsGroupMember.add(m.shape.id));
+      groupedRoots.push({
+        shape: { ...node.shape, name: `⊟ 组`, type: 'component' as Shape['type'] },
+        children: groupMembers,
+      });
     } else {
       groupedRoots.push(node);
     }
@@ -154,16 +168,32 @@ function buildTree(shapes: Shape[]): TreeNode[] {
 }
 
 export default function LayerPanel() {
-  const { shapes, selectedIds, setSelectedIds, reorderShape } = useEditorStore();
+  const { shapes, selectedIds, setSelectedIds } = useEditorStore();
+  const store = useEditorStore();
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const draggedId = useRef<string | null>(null);
+  // Store all ids being dragged together (same parent, same z-order group)
+  const draggedGroupRef = useRef<string[]>([]);
 
+  // In Figma: when you drag a shape, all shapes ABOVE it (later in sibling array)
+  // move with it, because they visually sit on top of it.
+  // e.g. [A(0), B(1), C(2)] -> dragging C drags [C, B, A]
   const handleDragStart = useCallback((e: DragEvent, id: string) => {
+    const shape = shapes.find(s => s.id === id);
+    if (!shape) return;
+    // Collect all shapes above `id` in the same parent (same parentId or both null)
+    const parentId = shape.parentId ?? null;
+    const siblings = shapes.filter(s => (s.parentId ?? null) === parentId);
+    // sibling indices in sibling array: 0=bottom, last=top
+    const sibIdx = siblings.findIndex(s => s.id === id);
+    // Shapes above `id`: those with sibling index > sibIdx (later in array = rendered on top)
+    const groupIds = siblings.slice(sibIdx).map(s => s.id);
     draggedId.current = id;
+    draggedGroupRef.current = groupIds;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', id);
-  }, []);
+  }, [shapes]);
 
   const handleDragOver = useCallback((e: DragEvent, id: string) => {
     e.preventDefault();
@@ -179,11 +209,68 @@ export default function LayerPanel() {
     e.preventDefault();
     setDragOverId(null);
     const srcId = draggedId.current;
+    const draggedGroup = draggedGroupRef.current;
     if (!srcId || srcId === targetId) return;
-    const targetIndex = shapes.findIndex(s => s.id === targetId);
-    if (targetIndex >= 0) reorderShape(srcId, targetIndex);
+    // draggedGroup must have at least srcId
+    if (draggedGroup.length === 0) return;
+
+    const srcShape = shapes.find(s => s.id === srcId);
+    const targetShape = shapes.find(s => s.id === targetId);
+    if (!srcShape || !targetShape) return;
+
+    const srcParentId = srcShape.parentId ?? undefined;
+
+    // All shapes in the dragged group must share the same parent as src
+    const allSameParent = draggedGroup.every(gid => {
+      const s = shapes.find(s => s.id === gid);
+      return (s?.parentId ?? undefined) === srcParentId;
+    });
+    if (!allSameParent) {
+      draggedId.current = null;
+      draggedGroupRef.current = [];
+      return;
+    }
+
+    // Case A: drop onto a container (frame/group/component) -> group becomes children of target
+    if (targetShape.type === 'frame' || targetShape.type === 'group' || targetShape.type === 'component') {
+      if (srcParentId !== targetId) {
+        // Reparent all shapes in the group to the container
+        draggedGroup.forEach(gid => store.reparentShape(gid, targetId));
+      }
+      // All shapes in draggedGroup sit above srcId; srcId was last in sibling array (bottom of the group)
+      // After reparent, they need to be moved to end of container's children.
+      // Move each in order (first = lowest z-order in group = goes to container's first child slot, etc.)
+      const containerSiblings = shapes.filter(s => s.parentId === targetId);
+      draggedGroup.forEach((gid, i) => {
+        const targetIndex = containerSiblings.length + i;
+        store.reorderShape(gid, targetIndex);
+      });
+      draggedId.current = null;
+      draggedGroupRef.current = [];
+      return;
+    }
+
+    // Case B: drop onto a leaf shape -> group goes to same parent as target, at target's position
+    const targetParent = targetShape.parentId ?? undefined;
+    // Compute target indices from the ORIGINAL shapes array before any mutations
+    const currentSiblings = shapes.filter(s => (s.parentId ?? undefined) === srcParentId);
+    const srcSibIdx = currentSiblings.findIndex(s => s.id === srcId);
+    const targetIndices = draggedGroup.map((gid, i) => {
+      // Each shape in draggedGroup lands at srcSibIdx + i, relative to targetParent's siblings
+      return srcSibIdx + i;
+    });
+    // Apply reparent first (mutates parentId), then reorder all shapes to computed positions
+    if (srcParentId !== targetParent) {
+      draggedGroup.forEach(gid => store.reparentShape(gid, targetParent));
+    }
+    // Reorder using indices computed from original state
+    draggedGroup.forEach((gid, i) => {
+      store.reorderShape(gid, targetIndices[i]);
+    });
+
     draggedId.current = null;
-  }, [shapes, reorderShape]);
+    draggedGroupRef.current = [];
+  }, [shapes, store]);
 
   const handleSelect = useCallback((id: string, addToSelection: boolean) => {
     const shape = shapes.find(s => s.id === id);
@@ -200,7 +287,34 @@ export default function LayerPanel() {
   const filteredShapes = useMemo(() => {
     if (!searchQuery.trim()) return shapes;
     const q = searchQuery.toLowerCase();
-    return shapes.filter(s => s.name.toLowerCase().includes(q) || s.type.toLowerCase().includes(q));
+
+    function matchesSearch(shape: Shape): boolean {
+      if (shape.name.toLowerCase().includes(q) || shape.type.toLowerCase().includes(q)) return true;
+      return false;
+    }
+
+    function getAncestorIds(shape: Shape, allShapes: Shape[]): Set<string> {
+      const ancestorIds = new Set<string>();
+      let current = shape;
+      while (current.parentId) {
+        ancestorIds.add(current.parentId);
+        const parent = allShapes.find(s => s.id === current.parentId);
+        if (!parent) break;
+        current = parent;
+      }
+      return ancestorIds;
+    }
+
+    // Find all matching shapes and their ancestors
+    const matchingShapes = shapes.filter(matchesSearch);
+    const extraAncestorIds = new Set<string>();
+    matchingShapes.forEach(m => {
+      getAncestorIds(m, shapes).forEach(id => extraAncestorIds.add(id));
+    });
+
+    return shapes.filter(s =>
+      matchesSearch(s) || extraAncestorIds.has(s.id)
+    );
   }, [shapes, searchQuery]);
 
   const tree = useMemo(() => buildTree([...filteredShapes].reverse()), [filteredShapes]);
@@ -215,7 +329,7 @@ export default function LayerPanel() {
   const renderNode = (node: TreeNode, depth: number): React.ReactNode => {
     const hasChildren = node.children.length > 0;
     const isCollapsed = collapsed.has(node.shape.id);
-    const isContainer = node.shape.type === 'frame' || node.shape.type === 'group';
+    const isContainer = node.shape.type === 'frame' || node.shape.type === 'group' || node.shape.type === 'component';
 
     if (hasChildren || isContainer) {
       return (
@@ -225,7 +339,7 @@ export default function LayerPanel() {
             style={{ paddingLeft: 8 + depth * 16, paddingRight: 12, paddingTop: 4, paddingBottom: 4 }}
             onClick={(e) => handleSelect(node.shape.id, e.shiftKey)}
           >
-            {hasChildren && (
+            {isContainer ? (
               <button
                 onClick={(e) => { e.stopPropagation(); toggle(node.shape.id); }}
                 className="p-0.5 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
@@ -233,12 +347,16 @@ export default function LayerPanel() {
               >
                 <ChevronRight size={12} className={`transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
               </button>
+            ) : (
+              <div className="w-4" />
             )}
-            {!hasChildren && <div className="w-4" />}
             <span className="w-4 h-4 flex items-center justify-center text-[var(--text-tertiary)] flex-shrink-0">
               {typeIconMap[node.shape.type] || <Layers size={13} />}
             </span>
             <span className="flex-1 text-xs truncate text-[var(--text-primary)]">{node.shape.name}</span>
+            {isContainer && hasChildren && (
+              <span className="text-[9px] text-[var(--text-tertiary)] flex-shrink-0">({node.children.length})</span>
+            )}
             {isContainer && node.shape.autoLayout && (
               <span className="text-[9px] px-1 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] flex-shrink-0">
                 {node.shape.autoLayout.direction === 'horizontal' ? '→' : '↓'}
@@ -268,7 +386,7 @@ export default function LayerPanel() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border)]">
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[var(--border)]">
         <div className="flex items-center flex-1 min-w-0 bg-[var(--bg-elevated)] rounded-md border border-[var(--border)] px-2 py-1 gap-1.5">
           <Search size={11} className="text-[var(--text-tertiary)] flex-shrink-0" />
           <input
@@ -283,6 +401,25 @@ export default function LayerPanel() {
             </button>
           )}
         </div>
+        <button
+          onClick={() => setCollapsed(new Set())}
+          className="p-1 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+          title="展开全部"
+          aria-label="展开全部"
+        >
+          <ChevronsDown size={13} />
+        </button>
+        <button
+          onClick={() => {
+            const allContainerIds = tree.filter(n => n.shape.type === 'frame' || n.shape.type === 'group' || n.shape.type === 'component').map(n => n.shape.id);
+            setCollapsed(new Set(allContainerIds));
+          }}
+          className="p-1 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+          title="折叠全部"
+          aria-label="折叠全部"
+        >
+          <ChevronsUp size={13} />
+        </button>
         <span className="text-[10px] text-[var(--text-tertiary)] font-mono flex-shrink-0">{filteredShapes.length}</span>
       </div>
       <div className="flex-1 overflow-y-auto">
