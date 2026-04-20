@@ -1,19 +1,50 @@
-import { Stage, Layer, Rect, Circle, Text, Line, Transformer, Star, Arrow, Image as KonvaImage, RegularPolygon, Group, Path } from 'react-konva';
-import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape, Gradient, CANVAS_WIDTH, CANVAS_HEIGHT, BlendMode } from '@/lib/types';
+import { fileToDataUrl, getImageDimensions, useImage } from '@/lib/hooks';
 import {
-  getShapeAABB,
-  measureGapBetweenAABBs,
-  computeParentPaddingSegments,
   computeAutoLayoutOverlay,
+  computeParentPaddingSegments,
+  getShapeAABB,
   hitTestShapeAtPoint,
   isLayoutContainer,
+  measureGapBetweenAABBs,
 } from '@/lib/measurement';
-import { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
-import { useImage, fileToDataUrl, getImageDimensions } from '@/lib/hooks';
+import { BlendMode, CANVAS_HEIGHT, CANVAS_WIDTH, Gradient, PenPoint, Shape, TokenBindings } from '@/lib/types';
+import { useEditorStore } from '@/stores/useEditorStore';
+import {
+  buildPenPoint,
+  getPathPreviewToCursor,
+  isNearFirstPoint,
+  pointsToSvgPath,
+  relToAbs,
+  updateSymmetricHandles,
+} from '@/lib/penTool';
+import { getClipFunc } from '@/lib/maskUtils';
+import { shapesToSvg, downloadSvg } from '@/lib/svgExport';
 import Konva from 'konva';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Arrow, Circle, Group, Image as KonvaImage, Layer, Line, Path, Rect, RegularPolygon, Stage, Star, Text, Transformer } from 'react-konva';
+import { ArrowLeft } from 'lucide-react';
 
 interface CanvasProps { width: number; height: number; }
+
+function resolveTokenValue(tokenId: string | undefined): string | undefined {
+  if (!tokenId) return undefined;
+  return useEditorStore.getState().getTokenValue(tokenId);
+}
+
+function resolveTokenBindings(shape: Shape): {
+  fill: string;
+  stroke: string;
+  opacity: number;
+  cornerRadius: number;
+} {
+  const bindings = shape.tokenBindings || ({} as TokenBindings);
+  return {
+    fill: resolveTokenValue(bindings.fill) ?? shape.fill,
+    stroke: resolveTokenValue(bindings.stroke) ?? shape.stroke,
+    opacity: bindings.opacity ? parseFloat(resolveTokenValue(bindings.opacity) ?? '1') : shape.opacity,
+    cornerRadius: bindings.cornerRadius ? parseInt(resolveTokenValue(bindings.cornerRadius) ?? '0') : shape.cornerRadius ?? 0,
+  };
+}
 
 function gradientToKonvaFill(g: Gradient, w: number, h: number): Record<string, unknown> {
   if (g.type === 'linear') {
@@ -83,6 +114,7 @@ function applyEffects(props: Record<string, unknown>, shape: Shape) {
   }
 }
 
+ 
 function useKonvaBlurCache(nodeRef: React.RefObject<Konva.Node | null>, blurRadius: number, ...cacheDeps: unknown[]) {
   useLayoutEffect(() => {
     const n = nodeRef.current;
@@ -95,7 +127,8 @@ function useKonvaBlurCache(nodeRef: React.RefObject<Konva.Node | null>, blurRadi
       n.clearCache();
     }
     return () => { n.clearCache(); };
-  }, [blurRadius, ...cacheDeps]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blurRadius, nodeRef, ...cacheDeps]);
 }
 
 function ImageShape({ shape, commonProps }: { shape: Shape; commonProps: Record<string, unknown> }) {
@@ -113,16 +146,18 @@ function ImageShape({ shape, commonProps }: { shape: Shape; commonProps: Record<
 }
 
 function ShapeRenderer({
-  shape, isSelected, editingTextId, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText,
+  shape, isSelected, editingTextId, isEditingPath, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText, onDblClickPath,
 }: {
   shape: Shape;
   isSelected: boolean;
   editingTextId: string | null;
+  isEditingPath?: boolean;
   onSelect: (id: string, add: boolean) => void;
   onDragEnd: (id: string, x: number, y: number) => void;
   onDragMove: (id: string, dx: number, dy: number) => void;
   onTransformEnd: (id: string, node: Konva.Node) => void;
   onDblClickText: (id: string) => void;
+  onDblClickPath?: () => void;
 }) {
   const shapeRef = useRef<Konva.Shape>(null);
   const initPos = useRef({ x: shape.x, y: shape.y });
@@ -137,19 +172,43 @@ function ShapeRenderer({
   const effectProps: Record<string, unknown> = {};
   applyEffects(effectProps, shape);
 
+  const resolvedTokens = useMemo(() => resolveTokenBindings(shape), [shape]);
+
   const commonProps: Record<string, unknown> = {
     ...effectProps,
     id: shape.id,
     ref: shapeRef as React.RefObject<never>,
     x: shape.x, y: shape.y,
     rotation: shape.rotation,
-    opacity: shape.opacity,
+    opacity: resolvedTokens.opacity,
     visible: shape.visible,
     draggable: !shape.locked,
     scaleX: shape.scaleX ?? 1,
     scaleY: shape.scaleY ?? 1,
     onClick: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(shape.id, e.evt.shiftKey); },
-    onDragStart: () => { initPos.current = { x: shape.x, y: shape.y }; },
+    onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => {
+      initPos.current = { x: shape.x, y: shape.y };
+      // Alt+Drag duplicate: create a copy at same position and drag that instead
+      if (e.evt.altKey && !shape.locked) {
+        const store = useEditorStore.getState();
+        const newId = store.addShape({ ...shape, id: undefined, x: shape.x, y: shape.y });
+        // Use RAF to allow React to render the new shape node before we redirect drag
+        requestAnimationFrame(() => {
+          const stage = e.target.getStage();
+          if (stage) {
+            const newNode = stage.findOne(`#${newId}`);
+            if (newNode) {
+              // Stop dragging original, start dragging duplicate
+              e.target.stopDrag();
+              newNode.position({ x: e.target.x(), y: e.target.y() });
+              newNode.startDrag();
+              // Update selection to the duplicate
+              store.setSelectedIds([newId]);
+            }
+          }
+        });
+      }
+    },
     onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => {
       const dx = e.target.x() - initPos.current.x;
       const dy = e.target.y() - initPos.current.y;
@@ -163,7 +222,7 @@ function ShapeRenderer({
   const blurR = shape.blur?.radius ?? 0;
   useKonvaBlurCache(shapeRef as React.RefObject<Konva.Node | null>, blurR, shape.id, shape.width, shape.height, shape.radius, shape.type, (shape.points || []).length, (shape.pathPoints || []).length);
 
-  const selStroke = isSelected ? '#D4A853' : shape.stroke;
+  const selStroke = isSelected ? '#D4A853' : resolvedTokens.stroke;
   const selStrokeW = isSelected ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth;
   const gradFill = (w: number, h: number) => shape.gradient ? { fill: undefined, ...gradientToKonvaFill(shape.gradient, w, h) } : {};
 
@@ -171,45 +230,84 @@ function ShapeRenderer({
     case 'rect':
     case 'frame': {
       const w = shape.width || 100, h = shape.height || 100;
-      return <Rect {...commonProps} width={w} height={h} fill={shape.gradient ? undefined : shape.fill} stroke={selStroke} strokeWidth={selStrokeW} cornerRadius={shape.cornerRadius || 0} dash={shape.strokeDash} {...gradFill(w, h)} />;
+      return <Rect {...commonProps} width={w} height={h} fill={shape.gradient ? undefined : resolvedTokens.fill} stroke={selStroke} strokeWidth={selStrokeW} cornerRadius={resolvedTokens.cornerRadius} dash={shape.strokeDash} {...gradFill(w, h)} />;
     }
     case 'circle': {
       const r = shape.radius || 50;
-      return <Circle {...commonProps} radius={r} fill={shape.gradient ? undefined : shape.fill} stroke={selStroke} strokeWidth={selStrokeW} dash={shape.strokeDash} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
+      return <Circle {...commonProps} radius={r} fill={shape.gradient ? undefined : resolvedTokens.fill} stroke={selStroke} strokeWidth={selStrokeW} dash={shape.strokeDash} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
     }
-    case 'text':
+    case 'text': {
+      // Merge text style with shape properties (shape overrides style)
+      const textStyle = (shape.textStyleId && useEditorStore.getState().textStyles.find(s => s.id === shape.textStyleId)) || null;
+      const effectiveFontSize = shape.fontSize ?? textStyle?.fontSize ?? 24;
+      const effectiveFontFamily = shape.fontFamily ?? textStyle?.fontFamily ?? 'sans-serif';
+      const effectiveFontWeight = shape.fontWeight ?? textStyle?.fontWeight ?? 'normal';
+      const effectiveTextAlign = shape.textAlign ?? textStyle?.textAlign ?? 'left';
+      const effectiveFill = resolvedTokens.fill ?? textStyle?.fill ?? '#E8E4DF';
+      const effectiveLineHeight = shape.lineHeight ?? textStyle?.lineHeight ?? 1.2;
+      const effectiveLetterSpacing = shape.letterSpacing ?? textStyle?.letterSpacing ?? 0;
+
+      const sizing = shape.textSizing || 'fixed';
+      let textWidth: number | undefined = shape.width;
+      let textHeight: number | undefined = shape.height;
+      let ellipsis = false;
+      if (sizing === 'autoWidth') {
+        textWidth = undefined;
+        textHeight = shape.height;
+      } else if (sizing === 'autoHeight') {
+        textWidth = shape.width;
+        textHeight = undefined;
+      } else {
+        // fixed — use fixed w/h, ellipsis if overflow
+        ellipsis = true;
+      }
       return (
         <Text
           {...commonProps}
           visible={shape.visible && editingTextId !== shape.id}
           text={shape.text || 'Text'}
-          fontSize={shape.fontSize || 24}
-          fontFamily={shape.fontFamily || 'sans-serif'}
-          fontStyle={shape.fontWeight || 'normal'}
-          align={shape.textAlign || 'left'}
-          width={shape.width}
-          fill={shape.fill}
-          lineHeight={shape.lineHeight ?? 1.2}
-          letterSpacing={shape.letterSpacing ?? 0}
+          fontSize={effectiveFontSize}
+          fontFamily={effectiveFontFamily}
+          fontStyle={effectiveFontWeight as string}
+          align={effectiveTextAlign as 'left' | 'center' | 'right' | 'justify'}
+          width={textWidth}
+          height={textHeight}
+          fill={effectiveFill}
+          lineHeight={effectiveLineHeight}
+          letterSpacing={effectiveLetterSpacing}
+          ellipsis={ellipsis}
           onDblClick={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onDblClickText(shape.id); }}
         />
       );
+    }
     case 'line':
-      return <Line {...commonProps} points={shape.points || [0, 0, 100, 100]} stroke={isSelected ? '#D4A853' : shape.stroke} strokeWidth={isSelected ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth} lineCap="round" lineJoin="round" dash={shape.strokeDash} fill={undefined} />;
+      return <Line {...commonProps} points={shape.points || [0, 0, 100, 100]} stroke={isSelected ? '#D4A853' : resolvedTokens.stroke} strokeWidth={isSelected ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth} lineCap="round" lineJoin="round" dash={shape.strokeDash} fill={undefined} />;
     case 'arrow':
-      return <Arrow {...commonProps} points={shape.points || [0, 0, 150, 0]} stroke={isSelected ? '#D4A853' : shape.stroke} strokeWidth={isSelected ? Math.max(shape.strokeWidth || 2, 2) : (shape.strokeWidth || 2)} fill={isSelected ? '#D4A853' : shape.stroke} pointerLength={10} pointerWidth={10} lineCap="round" />;
+      return <Arrow {...commonProps} points={shape.points || [0, 0, 150, 0]} stroke={isSelected ? '#D4A853' : resolvedTokens.stroke} strokeWidth={isSelected ? Math.max(shape.strokeWidth || 2, 2) : (shape.strokeWidth || 2)} fill={isSelected ? '#D4A853' : resolvedTokens.stroke} pointerLength={10} pointerWidth={10} lineCap="round" />;
     case 'star': {
       const r = shape.radius || 50;
-      return <Star {...commonProps} numPoints={shape.numPoints || 5} innerRadius={shape.innerRadius || 20} outerRadius={r} fill={shape.gradient ? undefined : shape.fill} stroke={selStroke} strokeWidth={selStrokeW} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
+      return <Star {...commonProps} numPoints={shape.numPoints || 5} innerRadius={shape.innerRadius || 20} outerRadius={r} fill={shape.gradient ? undefined : resolvedTokens.fill} stroke={selStroke} strokeWidth={selStrokeW} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
     }
     case 'triangle': {
       const r = shape.radius || 50;
-      return <RegularPolygon {...commonProps} sides={3} radius={r} fill={shape.gradient ? undefined : shape.fill} stroke={selStroke} strokeWidth={selStrokeW} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
+      return <RegularPolygon {...commonProps} sides={3} radius={r} fill={shape.gradient ? undefined : resolvedTokens.fill} stroke={selStroke} strokeWidth={selStrokeW} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
     }
     case 'path': {
-      const d = pathPointsToSvg(shape);
+      // pathData is set by boolean operations; pathPointsToSvg is for manually drawn paths
+      const d = shape.pathData || pathPointsToSvg(shape);
       if (!d) return null;
-      return <Path {...commonProps} data={d} fill={shape.fill === 'transparent' ? undefined : shape.fill} stroke={isSelected ? '#D4A853' : shape.stroke} strokeWidth={isSelected ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth} lineCap="round" lineJoin="round" />;
+      return (
+        <Path
+          {...commonProps}
+          data={d}
+          fill={shape.fill === 'transparent' ? undefined : shape.fill}
+          stroke={isSelected && !isEditingPath ? '#D4A853' : shape.stroke}
+          strokeWidth={isSelected && !isEditingPath ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth}
+          lineCap="round"
+          lineJoin="round"
+          onDblClick={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onDblClickPath?.(); }}
+        />
+      );
     }
     case 'image':
     case 'component':
@@ -223,17 +321,19 @@ function ShapeRenderer({
 
 // Recursive frame renderer: render frame background + children clipped inside
 function FrameRenderer({
-  frame, allShapes, selectedIds, editingTextId, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText,
+  frame, allShapes, selectedIds, editingTextId, isEditingPath, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText, onDblClickPath,
 }: {
   frame: Shape;
   allShapes: Shape[];
   selectedIds: string[];
   editingTextId: string | null;
+  isEditingPath?: boolean;
   onSelect: (id: string, add: boolean) => void;
   onDragEnd: (id: string, x: number, y: number) => void;
   onDragMove: (id: string, dx: number, dy: number) => void;
   onTransformEnd: (id: string, node: Konva.Node) => void;
   onDblClickText: (id: string) => void;
+  onDblClickPath?: (id: string) => void;
 }) {
   const groupRef = useRef<Konva.Group>(null);
   const children = allShapes.filter(s => s.parentId === frame.id);
@@ -268,6 +368,25 @@ function FrameRenderer({
         ctx.rect(0, 0, fw, fh);
       } : undefined}
       onClick={(e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(frame.id, e.evt.shiftKey); }}
+      onDragStart={(e: Konva.KonvaEventObject<DragEvent>) => {
+        // Alt+Drag duplicate for frames/groups
+        if (e.evt.altKey && !frame.locked) {
+          const store = useEditorStore.getState();
+          const newId = store.addShape({ ...frame, id: undefined, x: frame.x, y: frame.y });
+          requestAnimationFrame(() => {
+            const stage = e.target.getStage();
+            if (stage) {
+              const newNode = stage.findOne(`#${newId}`);
+              if (newNode) {
+                e.target.stopDrag();
+                newNode.position({ x: e.target.x(), y: e.target.y() });
+                newNode.startDrag();
+                store.setSelectedIds([newId]);
+              }
+            }
+          });
+        }
+      }}
       onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => onDragEnd(frame.id, e.target.x(), e.target.y())}
       onTransformEnd={(e: Konva.KonvaEventObject<Event>) => {
         e.cancelBubble = true;
@@ -299,37 +418,148 @@ function FrameRenderer({
         />
       )}
       {/* Children — positions relative to frame */}
-      {children.map(child => {
-        if (child.type === 'frame' || child.type === 'group') {
-          return (
-            <FrameRenderer
-              key={child.id}
-              frame={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
-              allShapes={allShapes}
-              selectedIds={selectedIds}
-              editingTextId={editingTextId}
-              onSelect={onSelect}
-              onDragEnd={onDragEnd}
-              onDragMove={onDragMove}
-              onTransformEnd={onTransformEnd}
-              onDblClickText={onDblClickText}
-            />
-          );
+      {(() => {
+        const result: React.ReactNode[] = [];
+        let i = 0;
+        while (i < children.length) {
+          const child = children[i];
+
+          // Check if this child is itself a mask source
+          // In Figma: a shape that has other shapes referencing it via maskSourceId
+          // clips ALL shapes that come after it (until another mask source appears)
+          const hasMaskTargets = allShapes.some(s => s.maskSourceId === child.id);
+
+          if (hasMaskTargets) {
+            // This shape is a mask source — collect ALL shapes after it until another mask source
+            const maskedChildren: Shape[] = [];
+            let j = i + 1;
+            while (j < children.length) {
+              const nextChild = children[j];
+              // Stop if we hit another mask source
+              if (allShapes.some(s => s.maskSourceId === nextChild.id)) {
+                break;
+              }
+              maskedChildren.push(nextChild);
+              j++;
+            }
+
+            // Render the mask source shape first
+            if (child.type === 'frame' || child.type === 'group' || child.type === 'component') {
+              result.push(
+                <FrameRenderer
+                  key={child.id}
+                  frame={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
+                  allShapes={allShapes}
+                  selectedIds={selectedIds}
+                  editingTextId={editingTextId}
+                  onSelect={onSelect}
+                  onDragEnd={onDragEnd}
+                  onDragMove={onDragMove}
+                  onTransformEnd={onTransformEnd}
+                  onDblClickText={onDblClickText}
+                />
+              );
+            } else {
+              result.push(
+                <ShapeRenderer
+                  key={child.id}
+                  shape={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
+                  isSelected={selectedIds.includes(child.id)}
+                  editingTextId={editingTextId}
+                  isEditingPath={isEditingPath && child.type === 'path'}
+                  onSelect={onSelect}
+                  onDragEnd={onDragEnd}
+                  onDragMove={onDragMove}
+                  onTransformEnd={onTransformEnd}
+                  onDblClickText={onDblClickText}
+                  onDblClickPath={onDblClickPath ? (() => onDblClickPath(child.id)) : undefined}
+                />
+              );
+            }
+
+            // Now render all masked children wrapped in a clipped group
+            if (maskedChildren.length > 0) {
+              const clipFn = getClipFunc(child);
+              result.push(
+                <Group key={`mask-group-${child.id}`} clipFunc={clipFn as unknown as (ctx: Konva.Context) => void}>
+                  {maskedChildren.map(sh => {
+                    if (sh.type === 'frame' || sh.type === 'group' || sh.type === 'component') {
+                      return (
+                        <FrameRenderer
+                          key={sh.id}
+                          frame={{ ...sh, x: sh.x - frame.x, y: sh.y - frame.y }}
+                          allShapes={allShapes}
+                          selectedIds={selectedIds}
+                          editingTextId={editingTextId}
+                          onSelect={onSelect}
+                          onDragEnd={onDragEnd}
+                          onDragMove={onDragMove}
+                          onTransformEnd={onTransformEnd}
+                          onDblClickText={onDblClickText}
+                        />
+                      );
+                    }
+                    return (
+                      <ShapeRenderer
+                        key={sh.id}
+                        shape={{ ...sh, x: sh.x - frame.x, y: sh.y - frame.y }}
+                        isSelected={selectedIds.includes(sh.id)}
+                        editingTextId={editingTextId}
+                        isEditingPath={isEditingPath && sh.type === 'path'}
+                        onSelect={onSelect}
+                        onDragEnd={onDragEnd}
+                        onDragMove={onDragMove}
+                        onTransformEnd={onTransformEnd}
+                        onDblClickText={onDblClickText}
+                        onDblClickPath={onDblClickPath ? (() => onDblClickPath(sh.id)) : undefined}
+                      />
+                    );
+                  })}
+                </Group>
+              );
+            }
+            // Skip past all the masked children
+            i += 1 + maskedChildren.length;
+            continue;
+          }
+
+          // Regular child (no mask)
+          if (child.type === 'frame' || child.type === 'group' || child.type === 'component') {
+            result.push(
+              <FrameRenderer
+                key={child.id}
+                frame={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
+                allShapes={allShapes}
+                selectedIds={selectedIds}
+                editingTextId={editingTextId}
+                onSelect={onSelect}
+                onDragEnd={onDragEnd}
+                onDragMove={onDragMove}
+                onTransformEnd={onTransformEnd}
+                onDblClickText={onDblClickText}
+              />
+            );
+          } else {
+            result.push(
+              <ShapeRenderer
+                key={child.id}
+                shape={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
+                isSelected={selectedIds.includes(child.id)}
+                editingTextId={editingTextId}
+                isEditingPath={isEditingPath && child.type === 'path'}
+                onSelect={onSelect}
+                onDragEnd={onDragEnd}
+                onDragMove={onDragMove}
+                onTransformEnd={onTransformEnd}
+                onDblClickText={onDblClickText}
+                onDblClickPath={onDblClickPath ? (() => onDblClickPath(child.id)) : undefined}
+              />
+            );
+          }
+          i++;
         }
-        return (
-          <ShapeRenderer
-            key={child.id}
-            shape={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
-            isSelected={selectedIds.includes(child.id)}
-            editingTextId={editingTextId}
-            onSelect={onSelect}
-            onDragEnd={onDragEnd}
-            onDragMove={onDragMove}
-            onTransformEnd={onTransformEnd}
-            onDblClickText={onDblClickText}
-          />
-        );
-      })}
+        return result;
+      })()}
       {/* Layout Grid overlay — flat list so Konva/React children stay valid */}
       {isSelected && frame.layoutGrids?.filter(g => g.visible).flatMap((g, gi) => {
         const rects: React.ReactNode[] = [];
@@ -359,14 +589,17 @@ function FrameRenderer({
 
 export default function Canvas({ width, height }: CanvasProps) {
   const store = useEditorStore();
-  const { shapes, selectedIds, activeTool, canvasZoom, canvasPan, canvasBg, setSelectedIds, clearSelection, updateShape, addShape, deleteShapes, duplicateShapes, setCanvasZoom, setCanvasPan, setActiveTool, undo, redo, setShowHelp, pushHistory, moveGroupShapes, applyConstraints, copyStyle, pasteStyle } = store;
+  const { shapes, selectedIds, activeTool, canvasZoom, canvasPan, canvasBg, setSelectedIds, clearSelection, updateShape, addShape, deleteShapes, duplicateShapes, setCanvasZoom, setCanvasPan, setViewportSize, setActiveTool, undo, redo, setShowHelp, pushHistory, applyConstraints, copyStyle, pasteStyle, showContextMenu, bringForward, sendBackward, bringToFront, sendToBack, alignShapes, setShowExportModal, panToShapeIds, editingComponentId, exitComponentEditing } = store;
 
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const isPanning = useRef(false);
   const lastPanPos = useRef({ x: 0, y: 0 });
-  const spacePressed = useRef(false);
+  const shiftRotationSnapRef = useRef(false);
+  const [spacePressed, setSpacePressed] = useState(false);
+
+  const editingComponent = editingComponentId ? shapes.find(s => s.id === editingComponentId) : null;
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
@@ -376,23 +609,71 @@ export default function Canvas({ width, height }: CanvasProps) {
   const rubberBandStart = useRef<{ x: number; y: number } | null>(null);
   const rubberBandUsed = useRef(false);
 
+  // Path node editing state
+  const [editingPathId, setEditingPathId] = useState<string | null>(null);
+  const [selectedAnchorIdx, setSelectedAnchorIdx] = useState<number | null>(null);
+  const draggingAnchorRef = useRef<{ idx: number; type: 'anchor' | 'cp1' | 'cp2' } | null>(null);
+
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [textEditPosition, setTextEditPosition] = useState<{ x: number; y: number } | null>(null);
+  const [textEditRotation, setTextEditRotation] = useState(0);
+
+  // Update textarea position when editing starts or shape moves
+  useEffect(() => {
+    if (!editingTextId || !stageRef.current) {
+      setTextEditPosition(null);
+      setTextEditRotation(0);
+      return;
+    }
+    // Find the Konva node for the text shape to get its true absolute position
+    const node = stageRef.current.findOne('#' + editingTextId);
+    if (node) {
+      setTextEditPosition(node.getAbsolutePosition());
+      // Also update rotation to account for parent transforms
+      setTextEditRotation(node.getAbsoluteRotation());
+    } else {
+      // Fallback: use shape data from store (may be wrong for nested shapes)
+      const shape = shapes.find(s => s.id === editingTextId);
+      if (shape) {
+        setTextEditPosition({
+          x: shape.x * canvasZoom + canvasPan.x,
+          y: shape.y * canvasZoom + canvasPan.y,
+        });
+        setTextEditRotation(shape.rotation || 0);
+      }
+    }
+  }, [editingTextId, canvasZoom, canvasPan, shapes]);
 
   const [snapLines, setSnapLines] = useState<{ x?: number; y?: number }[]>([]);
 
   // Pen tool state
-  const [penPoints, setPenPoints] = useState<{ x: number; y: number; cp1?: { x: number; y: number }; cp2?: { x: number; y: number } }[]>([]);
+  const [penPoints, setPenPoints] = useState<PenPoint[]>([]);
   const [penPreview, setPenPreview] = useState<{ x: number; y: number } | null>(null);
   const [penDragging, setPenDragging] = useState(false);
   const penDragStart = useRef<{ x: number; y: number } | null>(null);
+  const penAltRef = useRef(false);
 
   // Measure: Alt+hover or 测量工具 + 单选作为参考
   const [measureLines, setMeasureLines] = useState<{ x1: number; y1: number; x2: number; y2: number; dist: number; label?: string }[]>([]);
   const measurePointerRef = useRef({ x: 0, y: 0 });
   const pointerModsRef = useRef({ altKey: false });
   const measureRafScheduled = useRef(false);
+
+  // 找到 pointer 位置最上层的那个 frame/group（用于创建图形时设置 parentId）
+  const findParentFrame = useCallback((px: number, py: number): string | undefined => {
+    // 从后往前（zIndex 从高到低）找包含 px,py 的 frame/group/component
+    for (let i = shapes.length - 1; i >= 0; i--) {
+      const s = shapes[i];
+      if ((s.type === 'frame' || s.type === 'group' || s.type === 'component') && s.width && s.height) {
+        if (px >= s.x && px <= s.x + s.width && py >= s.y && py <= s.y + s.height) {
+          return s.id;
+        }
+      }
+    }
+    return undefined;
+  }, [shapes]);
 
   // Top-level shapes (no parentId) — frames and loose shapes
   const topLevelShapes = useMemo(() => shapes.filter(s => !s.parentId), [shapes]);
@@ -454,10 +735,11 @@ export default function Canvas({ width, height }: CanvasProps) {
 
   const finishPenPath = useCallback((close: boolean) => {
     if (penPoints.length < 2) { setPenPoints([]); setPenPreview(null); return; }
+    // Convert PenPoint[] to PathPoint[] for the shape
     const pathPts = penPoints.map(p => ({
       x: p.x, y: p.y,
-      ...(p.cp1 ? { cp1: p.cp1 } : {}),
-      ...(p.cp2 ? { cp2: p.cp2 } : {}),
+      ...(p.handleIn ? { cp1: relToAbs(p.handleIn, p) } : {}),
+      ...(p.handleOut ? { cp2: relToAbs(p.handleOut, p) } : {}),
     }));
     const id = addShape({
       type: 'path',
@@ -483,16 +765,52 @@ export default function Canvas({ width, height }: CanvasProps) {
       const target = e.target as HTMLElement;
       const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
       if (e.code === 'Space' && !e.repeat && !isInput) {
-        e.preventDefault(); spacePressed.current = true;
+        e.preventDefault(); setSpacePressed(true);
         if (stageRef.current) stageRef.current.container().style.cursor = 'grab';
         return;
       }
       if (isInput) return;
       const mod = e.metaKey || e.ctrlKey;
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) { e.preventDefault(); deleteShapes(selectedIds); }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
+        if (editingPathId) {
+          // Delete selected anchor point from path
+          const editingShape = shapes.find(s => s.id === editingPathId);
+          if (editingShape && selectedAnchorIdx !== null && (editingShape.pathPoints?.length ?? 0) > 1) {
+            e.preventDefault();
+            const newPts = editingShape.pathPoints!.filter((_, i) => i !== selectedAnchorIdx);
+            updateShape(editingPathId, { pathPoints: newPts });
+            setSelectedAnchorIdx(null);
+          }
+        } else {
+          e.preventDefault(); deleteShapes(selectedIds);
+        }
+      }
       else if (e.key === 'Escape') {
-        if (penPoints.length > 0) { setPenPoints([]); setPenPreview(null); }
+        if (penPoints.length >= 2) { finishPenPath(false); }
+        else if (penPoints.length > 0) { setPenPoints([]); setPenPreview(null); setPenDragging(false); penDragStart.current = null; }
+        else if (editingPathId) {
+          // Exit path edit mode — if anchor selected, deselect it; otherwise exit edit
+          if (selectedAnchorIdx !== null) { setSelectedAnchorIdx(null); }
+          else {
+            setEditingPathId(null);
+            setSelectedAnchorIdx(null);
+            draggingAnchorRef.current = null;
+          }
+        }
         else { clearSelection(); setActiveTool('select'); setEditingTextId(null); }
+      }
+      else if (e.key === 'Enter' && editingPathId) {
+        // Finish path editing
+        setEditingPathId(null);
+        setSelectedAnchorIdx(null);
+        draggingAnchorRef.current = null;
+      }
+      else if (e.key === 'c' && editingPathId && !mod) {
+        // Toggle closePath
+        const editingShape = shapes.find(s => s.id === editingPathId);
+        if (editingShape) {
+          updateShape(editingPathId, { closePath: !editingShape.closePath });
+        }
       }
       else if (mod && e.key === 'a') { e.preventDefault(); setSelectedIds(shapes.filter(s => s.visible && !s.locked).map(s => s.id)); }
       else if (mod && e.key === 'd' && !e.altKey) { e.preventDefault(); if (selectedIds.length > 0) duplicateShapes(selectedIds); }
@@ -504,6 +822,67 @@ export default function Canvas({ width, height }: CanvasProps) {
       else if ((mod && e.key === 'z' && e.shiftKey) || (mod && e.key === 'y')) { e.preventDefault(); redo(); }
       else if (mod && e.key === '0') { e.preventDefault(); setCanvasZoom(1); setCanvasPan({ x: 0, y: 0 }); }
       else if (mod && e.key === '1') { e.preventDefault(); const sx = (width / 2 - CANVAS_WIDTH / 2); const sy = (height / 2 - CANVAS_HEIGHT / 2); setCanvasZoom(1); setCanvasPan({ x: sx, y: sy }); }
+      // Figma: Cmd+Shift+E — Open export modal
+      else if (mod && e.shiftKey && e.key.toLowerCase() === 'e') { e.preventDefault(); setShowExportModal(true); }
+      // Figma: Cmd+Shift+C — Copy as SVG
+      else if (mod && e.shiftKey && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        if (selectedIds.length > 0) {
+          const svg = shapesToSvg(shapes, { selectedIds });
+          navigator.clipboard.writeText(svg).catch(() => {});
+          downloadSvg(svg, 'selection.svg');
+        }
+      }
+      // Figma: Cmd+Shift+V — Paste properties
+      else if (mod && e.shiftKey && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteStyle(); }
+      // Figma: Cmd+[ — Send backward
+      else if (mod && e.key === '[' && !e.shiftKey) {
+        e.preventDefault();
+        if (selectedIds.length === 1) sendBackward(selectedIds[0]);
+      }
+      // Figma: Cmd+] — Bring forward
+      else if (mod && e.key === ']' && !e.shiftKey) {
+        e.preventDefault();
+        if (selectedIds.length === 1) bringForward(selectedIds[0]);
+      }
+      // Figma: Cmd+Shift+[ — Send to back
+      else if (mod && e.key === '[' && e.shiftKey) {
+        e.preventDefault();
+        if (selectedIds.length === 1) sendToBack(selectedIds[0]);
+      }
+      // Figma: Cmd+Shift+] — Bring to front
+      else if (mod && e.key === ']' && e.shiftKey) {
+        e.preventDefault();
+        if (selectedIds.length === 1) bringToFront(selectedIds[0]);
+      }
+      // Figma: Cmd+Shift+L — Align left
+      else if (mod && e.shiftKey && e.key.toLowerCase() === 'l') { e.preventDefault(); if (selectedIds.length > 0) alignShapes(selectedIds, 'left'); }
+      // Figma: Cmd+Shift+T — Align center
+      else if (mod && e.shiftKey && e.key.toLowerCase() === 't') { e.preventDefault(); if (selectedIds.length > 0) alignShapes(selectedIds, 'centerH'); }
+      // Figma: Cmd+Shift+R — Align right (Cmd+R is zoom 100% which is Cmd+1, not a conflict)
+      else if (mod && e.shiftKey && e.key.toLowerCase() === 'r') { e.preventDefault(); if (selectedIds.length > 0) alignShapes(selectedIds, 'right'); }
+      // Figma: Cmd+2 — Zoom to selection
+      else if (mod && !e.shiftKey && e.key === '2') { e.preventDefault(); if (selectedIds.length > 0) panToShapeIds(selectedIds, width, height); }
+      // Figma: Tab — Cycle through selection (next)
+      else if (e.key === 'Tab' && !e.shiftKey && !isInput) {
+        e.preventDefault();
+        const visible = shapes.filter(s => s.visible && !s.locked);
+        if (visible.length === 0) return;
+        if (selectedIds.length === 0) { setSelectedIds([visible[0].id]); return; }
+        const currentIdx = visible.findIndex(s => s.id === selectedIds[0]);
+        const nextIdx = (currentIdx + 1) % visible.length;
+        setSelectedIds([visible[nextIdx].id]);
+      }
+      // Figma: Shift+Tab — Cycle through selection (previous)
+      else if (e.key === 'Tab' && e.shiftKey && !isInput) {
+        e.preventDefault();
+        const visible = shapes.filter(s => s.visible && !s.locked);
+        if (visible.length === 0) return;
+        if (selectedIds.length === 0) { setSelectedIds([visible[visible.length - 1].id]); return; }
+        const currentIdx = visible.findIndex(s => s.id === selectedIds[0]);
+        const prevIdx = (currentIdx - 1 + visible.length) % visible.length;
+        setSelectedIds([visible[prevIdx].id]);
+      }
       else if (e.key === '/' || e.key === '?') { if (mod || e.shiftKey) { e.preventDefault(); setShowHelp(true); } }
       else if (e.key === 'v' || e.key === 'V') setActiveTool('select');
       else if (e.key === 'r' || e.key === 'R') setActiveTool('rect');
@@ -514,18 +893,19 @@ export default function Canvas({ width, height }: CanvasProps) {
       else if (e.key === 'f' || e.key === 'F') setActiveTool('frame');
       else if (e.key === 'p' || e.key === 'P') setActiveTool('pen');
       else if (e.key === 'm' || e.key === 'M') setActiveTool('measure');
+      else if (e.key === 'i' || e.key === 'I') setActiveTool('eyedropper');
       else if (e.key === 'Enter' && penPoints.length >= 2) {
         finishPenPath(false);
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') { spacePressed.current = false; if (stageRef.current && !isPanning.current) stageRef.current.container().style.cursor = 'default'; }
+      if (e.code === 'Space') { setSpacePressed(false); if (stageRef.current && !isPanning.current) stageRef.current.container().style.cursor = 'default'; }
       if (e.key === 'Alt') setMeasureLines([]);
     };
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); };
-  }, [selectedIds, shapes, deleteShapes, clearSelection, setSelectedIds, duplicateShapes, undo, redo, setCanvasZoom, setCanvasPan, setActiveTool, setShowHelp, width, height, penPoints, copyStyle, pasteStyle, finishPenPath]);
+  }, [selectedIds, shapes, deleteShapes, clearSelection, setSelectedIds, duplicateShapes, undo, redo, setCanvasZoom, setCanvasPan, setActiveTool, setShowHelp, width, height, penPoints, copyStyle, pasteStyle, finishPenPath, editingPathId, selectedAnchorIdx, updateShape, bringForward, sendBackward, bringToFront, sendToBack, alignShapes, setShowExportModal, panToShapeIds]);
 
   useEffect(() => {
     if (!transformerRef.current || !stageRef.current) return;
@@ -539,6 +919,11 @@ export default function Canvas({ width, height }: CanvasProps) {
     transformerRef.current.nodes(nodes);
     transformerRef.current.getLayer()?.batchDraw();
   }, [selectedIds, shapes, activeTool]);
+
+  // 同步视口尺寸到 store（供 panToShapeIds 使用）
+  useEffect(() => {
+    setViewportSize(width, height);
+  }, [width, height, setViewportSize]);
 
   const handleSelect = useCallback((id: string, add: boolean) => {
     if (activeTool !== 'select' && activeTool !== 'measure') return;
@@ -560,28 +945,60 @@ export default function Canvas({ width, height }: CanvasProps) {
     const currentShapes = useEditorStore.getState().shapes;
     const shape = currentShapes.find(s => s.id === id);
     if (!shape) return;
+    const stage = stageRef.current;
 
     if (shape.groupId) {
-      const stage = stageRef.current; if (!stage) return;
+      if (!stage) return;
       currentShapes.filter(s => s.groupId === shape.groupId && s.id !== id).forEach(s => {
         const node = stage.findOne(`#${s.id}`);
         if (node) { node.x(s.x + dx); node.y(s.y + dy); }
       });
     }
 
-    // Move children of frames
+    // Move children of frames + shapes above in z-order
     if (shape.type === 'frame' || shape.type === 'group') {
-      const stage = stageRef.current; if (!stage) return;
+      if (!stage) return;
+      // Move children
       currentShapes.filter(s => s.parentId === shape.id).forEach(s => {
         const node = stage.findOne(`#${s.id}`);
         if (node) { node.x(s.x + dx); node.y(s.y + dy); }
       });
+      // Move shapes above in z-order (same parent, later in sibling array)
+      const parentId = shape.parentId ?? undefined;
+      const siblings = currentShapes.filter(s => (s.parentId ?? undefined) === parentId);
+      const sibIdx = siblings.findIndex(s => s.id === id);
+      const shapesAbove = siblings.slice(sibIdx + 1);
+      shapesAbove.forEach(above => {
+        const node = stage.findOne(`#${above.id}`);
+        if (node) { node.x(above.x + dx); node.y(above.y + dy); }
+      });
+    }
+
+    // Z-order group: move all shapes ABOVE `id` in sibling order (they visually sit on top)
+    if (!shape.groupId && shape.type !== 'frame' && shape.type !== 'group') {
+      if (stage) {
+        const parentId = shape.parentId ?? undefined;
+        const siblings = currentShapes.filter(s => (s.parentId ?? undefined) === parentId);
+        const sibIdx = siblings.findIndex(s => s.id === id);
+        // shapes above = later in siblings array = visually on top = move together with id
+        const shapesAbove = siblings.slice(sibIdx + 1);
+        shapesAbove.forEach(above => {
+          const node = stage.findOne(`#${above.id}`);
+          if (node) { node.x(above.x + dx); node.y(above.y + dy); }
+        });
+      }
     }
 
     const SNAP_THRESHOLD = 6;
     const draggedBounds = getShapeBoundsForSnap({ ...shape, x: shape.x + dx, y: shape.y + dy });
     const guides: { x?: number; y?: number }[] = [];
-    const others = currentShapes.filter(s => s.id !== id && (!shape.groupId || s.groupId !== shape.groupId) && s.parentId !== shape.id);
+    // Exclude shapes that will move with the dragged shape (groupId, frame children, z-order above)
+    const parentId = shape.parentId ?? undefined;
+    const siblings = currentShapes.filter(s => (s.parentId ?? undefined) === parentId);
+    const sibIdx = siblings.findIndex(s => s.id === id);
+    const shapesAbove = siblings.slice(sibIdx + 1).map(s => s.id);
+    const movingIds = new Set([id, ...shapesAbove, ...(shape.groupId ? currentShapes.filter(s => s.groupId === shape.groupId).map(s => s.id) : []), ...(shape.type === 'frame' || shape.type === 'group' ? currentShapes.filter(s => s.parentId === id).map(s => s.id) : [])]);
+    const others = currentShapes.filter(s => !movingIds.has(s.id));
 
     for (const other of others) {
       const ob = getShapeBoundsForSnap(other);
@@ -604,23 +1021,48 @@ export default function Canvas({ width, height }: CanvasProps) {
     const currentShapes = useEditorStore.getState().shapes;
     const shape = currentShapes.find(s => s.id === id);
     pushHistory();
+
+    // Collect all shapes that will move: z-order group + groupId + frame children
+    const parentId = shape?.parentId ?? undefined;
+    const siblings = currentShapes.filter(s => (s.parentId ?? undefined) === parentId);
+    const sibIdx = siblings.findIndex(s => s.id === id);
+    const shapesAbove = siblings.slice(sibIdx + 1).map(s => s.id);
+    const groupMemberIds = shape?.groupId ? currentShapes.filter(s => s.groupId === shape.groupId).map(s => s.id) : [];
+    const childIds = (shape?.type === 'frame' || shape?.type === 'group')
+      ? currentShapes.filter(s => s.parentId === id).map(s => s.id) : [];
+    const allMovingIds = new Set([id, ...shapesAbove, ...groupMemberIds, ...childIds]);
+
     if (shape?.groupId) {
-      moveGroupShapes(shape.groupId, id, x, y);
+      // groupId: move all members including shapes above
+      const dx = x - (shape.x ?? 0), dy = y - (shape.y ?? 0);
+      allMovingIds.forEach(sid => {
+        const s = currentShapes.find(s => s.id === sid);
+        if (s) updateShape(sid, { x: s.x + dx, y: s.y + dy });
+      });
     } else if (shape?.type === 'frame' || shape?.type === 'group') {
-      // Move frame/group and all its children
       const dx = x - shape.x, dy = y - shape.y;
-      const childIds = currentShapes.filter(s => s.parentId === id).map(s => s.id);
       const updates = new Map<string, Partial<Shape>>();
       updates.set(id, { x, y });
       childIds.forEach(cid => {
         const child = currentShapes.find(s => s.id === cid);
         if (child) updates.set(cid, { x: child.x + dx, y: child.y + dy });
       });
+      // Also move shapes above (same parent, later in array)
+      shapesAbove.forEach(aid => {
+        const s = currentShapes.find(s => s.id === aid);
+        if (s) updates.set(aid, { x: s.x + dx, y: s.y + dy });
+      });
       updates.forEach((u, sid) => updateShape(sid, u));
     } else {
-      updateShape(id, { x, y });
+      // Move dragged shape + all shapes above it in sibling order
+      if (!shape) return;
+      const dx = x - shape.x, dy = y - shape.y;
+      allMovingIds.forEach(sid => {
+        const s = currentShapes.find(s => s.id === sid);
+        if (s) updateShape(sid, { x: s.x + dx, y: s.y + dy });
+      });
     }
-  }, [updateShape, pushHistory, moveGroupShapes]);
+  }, [updateShape, pushHistory]);
 
   const handleTransformEnd = useCallback((id: string, node: Konva.Node) => {
     pushHistory();
@@ -676,7 +1118,7 @@ export default function Canvas({ width, height }: CanvasProps) {
   }, [canvasZoom, canvasPan, setCanvasZoom, setCanvasPan]);
 
   const handleMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (e.evt.button === 1 || (e.evt.button === 0 && (spacePressed.current || activeTool === 'hand'))) {
+    if (e.evt.button === 1 || (e.evt.button === 0 && (spacePressed || activeTool === 'hand'))) {
       isPanning.current = true; lastPanPos.current = { x: e.evt.clientX, y: e.evt.clientY };
       if (stageRef.current) stageRef.current.container().style.cursor = 'grabbing'; return;
     }
@@ -686,16 +1128,54 @@ export default function Canvas({ width, height }: CanvasProps) {
     // Pen tool click — start adding a point; drag to create Bezier handles
     if (activeTool === 'pen') {
       const pt = getCanvasPoint();
+      penAltRef.current = e.evt.altKey;
+
+      // Check if clicking near the first point to close
       if (penPoints.length >= 2) {
-        const first = penPoints[0];
-        if (Math.abs(pt.x - first.x) < 10 && Math.abs(pt.y - first.y) < 10) {
+        if (isNearFirstPoint(penPoints, pt.x, pt.y)) {
           finishPenPath(true);
           return;
         }
       }
+
+      // Add new point
       setPenDragging(true);
       penDragStart.current = pt;
-      setPenPoints(prev => [...prev, { x: pt.x, y: pt.y }]);
+      const newPt = buildPenPoint(pt.x, pt.y);
+      setPenPoints(prev => [...prev, newPt]);
+      return;
+    }
+
+    // Eyedropper tool — sample color from canvas at click position
+    if (activeTool === 'eyedropper') {
+      const stage = stageRef.current;
+      if (!stage) return;
+      const pos = stage.getPointerPosition();
+      if (!pos) return;
+      // Get the canvas pixel data
+      const data = stage.toDataURL();
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        const scaleX = img.width / stage.width();
+        const scaleY = img.height / stage.height();
+        const px = Math.floor(pos.x * scaleX);
+        const py = Math.floor(pos.y * scaleY);
+        const pixel = ctx.getImageData(px, py, 1, 1).data;
+        const hex = '#' + [pixel[0], pixel[1], pixel[2]].map(v => v.toString(16).padStart(2, '0')).join('');
+        // Apply to selected shape's fill (or stroke with Alt)
+        if (selectedIds.length > 0) {
+          const target = e.evt.altKey ? 'stroke' : 'fill';
+          pushHistory();
+          selectedIds.forEach(id => updateShape(id, { [target]: hex }));
+        }
+      };
+      img.src = data;
       return;
     }
 
@@ -707,12 +1187,52 @@ export default function Canvas({ width, height }: CanvasProps) {
       return;
     }
 
+    // Path edit mode: clicking on a path segment inserts a new anchor point
+    if (editingPathId && activeTool === 'select') {
+      const editingShape = shapes.find(s => s.id === editingPathId);
+      if (editingShape?.pathPoints && editingShape.pathPoints.length >= 2) {
+        const pt = getCanvasPoint();
+        const pts = editingShape.pathPoints;
+        const THRESHOLD = 12; // canvas units
+        let bestDist = Infinity;
+        let bestSegIdx = -1;
+        // Check each line segment
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = pts[i], b = pts[i + 1];
+          // Project point onto line segment
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const lenSq = dx * dx + dy * dy;
+          const t = lenSq > 0 ? Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / lenSq)) : 0;
+          const projX = a.x + t * dx, projY = a.y + t * dy;
+          const dist = Math.sqrt((pt.x - projX) ** 2 + (pt.y - projY) ** 2);
+          if (dist < bestDist) { bestDist = dist; bestSegIdx = i; }
+        }
+        if (bestSegIdx >= 0 && bestDist < THRESHOLD) {
+          // Insert new point at the closest position on the segment
+          const a = pts[bestSegIdx], b = pts[bestSegIdx + 1];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const lenSq = dx * dx + dy * dy;
+          const t = lenSq > 0 ? Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / lenSq)) : 0;
+          const newX = a.x + t * dx, newY = a.y + t * dy;
+          const newPts = [
+            ...pts.slice(0, bestSegIdx + 1),
+            { x: newX, y: newY },
+            ...pts.slice(bestSegIdx + 1),
+          ];
+          updateShape(editingPathId, { pathPoints: newPts });
+          setSelectedAnchorIdx(bestSegIdx + 1);
+          return;
+        }
+      }
+    }
+
     const drawTools = ['rect', 'circle', 'line', 'text', 'star', 'triangle', 'frame'];
     if (drawTools.includes(activeTool) && isStage) {
       const pt = getCanvasPoint();
       setIsDrawing(true); setDrawStart(pt); setDrawPreview({ x: pt.x, y: pt.y, w: 0, h: 0 });
     }
-  }, [activeTool, getCanvasPoint, penPoints, finishPenPath]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, getCanvasPoint, penPoints, finishPenPath, spacePressed, editingPathId, shapes, updateShape]);
 
   const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current; if (!stage) return;
@@ -722,26 +1242,40 @@ export default function Canvas({ width, height }: CanvasProps) {
       setCanvasPan({ x: canvasPan.x + dx, y: canvasPan.y + dy }); return;
     }
     // Pen tool: drag to create Bezier handles on last point
-    if (activeTool === 'pen' && penDragging && penDragStart.current && penPoints.length > 0) {
-      const pt = getCanvasPoint();
-      const origin = penDragStart.current;
-      const dx = pt.x - origin.x, dy = pt.y - origin.y;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-        setPenPoints(prev => {
-          const arr = [...prev];
-          const last = arr[arr.length - 1];
-          arr[arr.length - 1] = { ...last, cp2: { x: origin.x + dx, y: origin.y + dy } };
-          return arr;
-        });
+    // Pen tool: track Alt key state and drag to create Bezier handles on last point
+    if (activeTool === 'pen') {
+      penAltRef.current = e.evt.altKey;
+
+      if (penDragging && penDragStart.current && penPoints.length > 0) {
+        const pt = getCanvasPoint();
+        const origin = penDragStart.current;
+        const dx = pt.x - origin.x;
+        const dy = pt.y - origin.y;
+
+        // Only create handles if dragged far enough
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+          const handleOutAbs = { x: origin.x + dx, y: origin.y + dy };
+          const breakSymmetry = penAltRef.current;
+
+          setPenPoints(prev => {
+            const newPts = [...prev];
+            const lastIdx = newPts.length - 1;
+
+            // Set handleOut on the current (newly added) point
+            const updated = updateSymmetricHandles(newPts, lastIdx, handleOutAbs, breakSymmetry);
+            return updated;
+          });
+        }
+        setPenPreview(pt);
+        return;
       }
-      setPenPreview(pt);
-      return;
-    }
-    // Pen tool preview
-    if (activeTool === 'pen' && penPoints.length > 0) {
-      const pt = getCanvasPoint();
-      setPenPreview(pt);
-      return;
+
+      // Pen tool preview (no drag, just show cursor position)
+      if (penPoints.length > 0) {
+        const pt = getCanvasPoint();
+        setPenPreview(pt);
+        return;
+      }
     }
     if (rubberBandStart.current) {
       const pt = getCanvasPoint();
@@ -757,8 +1291,8 @@ export default function Canvas({ width, height }: CanvasProps) {
       setDrawPreview({ x: Math.min(drawStart.x, pt.x), y: Math.min(drawStart.y, pt.y), w: Math.abs(pt.x - drawStart.x), h: Math.abs(pt.y - drawStart.y) });
       return;
     }
-    if (activeTool === 'hand' || spacePressed.current) stage.container().style.cursor = 'grab';
-    else if (activeTool === 'measure') stage.container().style.cursor = 'crosshair';
+    if (activeTool === 'hand' || spacePressed) stage.container().style.cursor = 'grab';
+    else if (activeTool === 'measure' || activeTool === 'eyedropper') stage.container().style.cursor = 'crosshair';
     else if (activeTool !== 'select') stage.container().style.cursor = 'crosshair';
     else stage.container().style.cursor = e.target !== stage ? 'move' : 'default';
 
@@ -801,7 +1335,7 @@ export default function Canvas({ width, height }: CanvasProps) {
     } else {
       setMeasureLines([]);
     }
-  }, [canvasPan, setCanvasPan, isDrawing, drawStart, getCanvasPoint, activeTool, penPoints, penDragging, selectedIds, shapes]);
+  }, [canvasPan, setCanvasPan, isDrawing, drawStart, getCanvasPoint, activeTool, penPoints, penDragging, selectedIds, spacePressed]);
 
   const handleMouseUp = useCallback(() => {
     if (penDragging) {
@@ -811,7 +1345,7 @@ export default function Canvas({ width, height }: CanvasProps) {
 
     if (isPanning.current) {
       isPanning.current = false;
-      if (stageRef.current) stageRef.current.container().style.cursor = spacePressed.current ? 'grab' : 'default';
+      if (stageRef.current) stageRef.current.container().style.cursor = spacePressed ? 'grab' : 'default';
       return;
     }
 
@@ -834,8 +1368,11 @@ export default function Canvas({ width, height }: CanvasProps) {
     if (isDrawing && drawStart && drawPreview) {
       const { x, y, w, h } = drawPreview;
       const min = 10;
+      // 图形中心点，判断应该进入哪个 parent frame
+      const cx = x + w / 2, cy = y + h / 2;
+      const parentId = findParentFrame(cx, cy);
       let id: string | null = null;
-      const base = { fill: '#4A4A52', stroke: '#3A3A40', strokeWidth: 1, opacity: 1, rotation: 0, visible: true, locked: false, name: '' };
+      const base = { fill: '#4A4A52', stroke: '#3A3A40', strokeWidth: 1, opacity: 1, rotation: 0, visible: true, locked: false, name: '', parentId };
       if (activeTool === 'frame' && w >= min && h >= min) {
         id = addShape({ ...base, type: 'frame', x, y, width: w, height: h, fill: '#FFFFFF08', stroke: '#555560', cornerRadius: 0, clipContent: true });
       }
@@ -850,7 +1387,7 @@ export default function Canvas({ width, height }: CanvasProps) {
       if (id) { setSelectedIds([id]); setActiveTool('select'); }
     }
     setIsDrawing(false); setDrawStart(null); setDrawPreview(null);
-  }, [isDrawing, drawStart, drawPreview, activeTool, addShape, setSelectedIds, setActiveTool, rubberBand, penDragging]);
+  }, [isDrawing, drawStart, drawPreview, activeTool, addShape, setSelectedIds, setActiveTool, rubberBand, penDragging, findParentFrame, spacePressed]);
 
   const handleDblClickText = useCallback((id: string) => {
     const shape = shapes.find(s => s.id === id);
@@ -859,6 +1396,13 @@ export default function Canvas({ width, height }: CanvasProps) {
     setEditingText(shape.text || '');
     setSelectedIds([id]);
     setTimeout(() => editTextareaRef.current?.focus(), 10);
+  }, [shapes, setSelectedIds]);
+
+  const handleDblClickPath = useCallback((id: string) => {
+    const shape = shapes.find(s => s.id === id);
+    if (!shape || shape.type !== 'path') return;
+    setEditingPathId(id);
+    setSelectedIds([id]);
   }, [shapes, setSelectedIds]);
 
   const commitTextEdit = useCallback(() => {
@@ -876,28 +1420,28 @@ export default function Canvas({ width, height }: CanvasProps) {
     return dots;
   }, []);
 
-  const cursor = activeTool === 'hand' || spacePressed.current ? 'grab' : activeTool === 'pen' || activeTool === 'measure' ? 'crosshair' : activeTool !== 'select' ? 'crosshair' : 'default';
+  const cursor = activeTool === 'hand' || spacePressed ? 'grab' : activeTool === 'pen' || activeTool === 'measure' || activeTool === 'eyedropper' ? 'crosshair' : activeTool !== 'select' ? 'crosshair' : 'default';
 
   const editingShape = editingTextId ? shapes.find(s => s.id === editingTextId) : null;
-  const textareaStyle = editingShape ? {
-    left: editingShape.x * canvasZoom + canvasPan.x,
-    top: editingShape.y * canvasZoom + canvasPan.y,
+  const textareaStyle = editingShape && textEditPosition ? {
+    left: textEditPosition.x,
+    top: textEditPosition.y,
     width: Math.max(100, (editingShape.width || 200)) * canvasZoom,
     fontSize: (editingShape.fontSize || 24) * canvasZoom,
     fontFamily: editingShape.fontFamily || 'sans-serif',
     color: editingShape.fill,
     minHeight: (editingShape.fontSize || 24) * 1.4 * canvasZoom,
-    transform: `rotate(${editingShape.rotation}deg)`,
+    transform: `rotate(${textEditRotation}deg)`,
     transformOrigin: 'top left',
   } : null;
 
-  // Build pen preview SVG path
-  const penPreviewPoints = penPoints.length > 0 ? (() => {
-    const pts = [...penPoints, ...(penPreview ? [penPreview] : [])];
-    const arr: number[] = [];
-    pts.forEach(p => { arr.push(p.x, p.y); });
-    return arr;
-  })() : null;
+  // Build pen preview SVG path (bezier curve from last point to cursor)
+  const penPreviewPath = (penPoints.length > 0 && penPreview)
+    ? getPathPreviewToCursor(penPoints, penPreview.x, penPreview.y)
+    : '';
+
+  // Build the completed path segments for display
+  const penPathData = penPoints.length > 0 ? pointsToSvgPath(penPoints, false) : '';
 
   return (
     <div
@@ -917,6 +1461,28 @@ export default function Canvas({ width, height }: CanvasProps) {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onContextMenu={(e) => {
+          e.evt.preventDefault();
+          e.evt.stopPropagation();
+          const stage = stageRef.current;
+          if (!stage) return;
+          const pointer = stage.getPointerPosition();
+          if (!pointer) return;
+          // Convert to canvas coordinates
+          const canvasX = (pointer.x - canvasPan.x) / canvasZoom;
+          const canvasY = (pointer.y - canvasPan.y) / canvasZoom;
+          // Find topmost shape under cursor
+          const topShape = shapes.slice().reverse().find(s => {
+            if (!s.visible || s.locked) return false;
+            const aabb = getShapeAABB(s);
+            return canvasX >= aabb.left && canvasX <= aabb.right && canvasY >= aabb.top && canvasY <= aabb.bottom;
+          });
+          const targetIds = topShape
+            ? selectedIds.includes(topShape.id) ? selectedIds : [topShape.id]
+            : selectedIds.length > 0 ? selectedIds : [];
+          // Show context menu even on empty canvas (for create shape options)
+          showContextMenu({ x: e.evt.clientX, y: e.evt.clientY, targetIds });
+        }}
         style={{ cursor }}
       >
         <Layer listening={false}>
@@ -924,46 +1490,98 @@ export default function Canvas({ width, height }: CanvasProps) {
           <Rect x={0} y={0} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} fill={canvasBg} stroke="#2A2A30" strokeWidth={1} listening={false} />
         </Layer>
         <Layer>
-          {topLevelShapes.map(shape => {
-            if (shape.type === 'frame' || shape.type === 'group') {
-              return (
-                <FrameRenderer
-                  key={shape.id}
-                  frame={shape}
-                  allShapes={shapes}
-                  selectedIds={selectedIds}
-                  editingTextId={editingTextId}
-                  onSelect={handleSelect}
-                  onDragEnd={handleDragEnd}
-                  onDragMove={handleDragMove}
-                  onTransformEnd={handleTransformEnd}
-                  onDblClickText={handleDblClickText}
-                />
+          {(() => {
+            // Identify shapes that are used as mask sources (some other shape has maskSourceId pointing to them)
+            const maskSourceIds = new Set(
+              shapes.filter(s => shapes.some(sh => sh.maskSourceId === s.id)).map(s => s.id)
+            );
+
+            // Collect top-level shapes that have maskSourceId (masked by another shape)
+            const maskedTopLevelShapes = topLevelShapes.filter(s => s.maskSourceId);
+
+            // Collect top-level shapes that are mask sources (skip them at top level, they'll be handled via clip)
+            const regularTopLevelShapes = topLevelShapes.filter(s => !maskSourceIds.has(s.id));
+
+            const result: React.ReactNode[] = [];
+
+            // Render regular (non-masked, non-mask-source) top-level shapes
+            for (const shape of regularTopLevelShapes) {
+              if (shape.type === 'frame' || shape.type === 'group') {
+                result.push(
+                  <FrameRenderer
+                    key={shape.id}
+                    frame={shape}
+                    allShapes={shapes}
+                    selectedIds={selectedIds}
+                    editingTextId={editingTextId}
+                    onSelect={handleSelect}
+                    onDragEnd={handleDragEnd}
+                    onDragMove={handleDragMove}
+                    onTransformEnd={handleTransformEnd}
+                    onDblClickText={handleDblClickText}
+                    isEditingPath={editingPathId !== null}
+                    onDblClickPath={handleDblClickPath}
+                  />
+                );
+              } else {
+                result.push(
+                  <ShapeRenderer
+                    key={shape.id}
+                    shape={shape}
+                    isSelected={selectedIds.includes(shape.id)}
+                    editingTextId={editingTextId}
+                    isEditingPath={editingPathId === shape.id}
+                    onSelect={handleSelect}
+                    onDragEnd={handleDragEnd}
+                    onDragMove={handleDragMove}
+                    onTransformEnd={handleTransformEnd}
+                    onDblClickText={handleDblClickText}
+                    onDblClickPath={() => handleDblClickPath(shape.id)}
+                  />
+                );
+              }
+            }
+
+            // Render top-level shapes that are masked — wrap each in a Group with clipFunc
+            for (const shape of maskedTopLevelShapes) {
+              // Find the mask source shape
+              const maskSource = shapes.find(s => s.id === shape.maskSourceId);
+              if (!maskSource) continue; // Mask source doesn't exist
+
+              const clipFn = getClipFunc(maskSource);
+              result.push(
+                <Group key={shape.id} clipFunc={clipFn as unknown as (ctx: Konva.Context) => void}>
+                  <ShapeRenderer
+                    shape={shape}
+                    isSelected={selectedIds.includes(shape.id)}
+                    editingTextId={editingTextId}
+                    isEditingPath={editingPathId === shape.id}
+                    onSelect={handleSelect}
+                    onDragEnd={handleDragEnd}
+                    onDragMove={handleDragMove}
+                    onTransformEnd={handleTransformEnd}
+                    onDblClickText={handleDblClickText}
+                    onDblClickPath={() => handleDblClickPath(shape.id)}
+                  />
+                </Group>
               );
             }
-            return (
-              <ShapeRenderer
-                key={shape.id}
-                shape={shape}
-                isSelected={selectedIds.includes(shape.id)}
-                editingTextId={editingTextId}
-                onSelect={handleSelect}
-                onDragEnd={handleDragEnd}
-                onDragMove={handleDragMove}
-                onTransformEnd={handleTransformEnd}
-                onDblClickText={handleDblClickText}
-              />
-            );
-          })}
+
+            return result;
+          })()}
           {/* Draw previews */}
           {isDrawing && drawPreview && (activeTool === 'rect' || activeTool === 'frame') && <Rect x={drawPreview.x} y={drawPreview.y} width={drawPreview.w} height={drawPreview.h} fill={activeTool === 'frame' ? 'rgba(255,255,255,0.03)' : 'rgba(74,74,82,0.3)'} stroke={activeTool === 'frame' ? '#6495ED' : '#D4A853'} strokeWidth={1} dash={[6, 3]} listening={false} />}
           {isDrawing && drawPreview && activeTool === 'circle' && <Circle x={drawPreview.x + drawPreview.w / 2} y={drawPreview.y + drawPreview.h / 2} radius={Math.max(drawPreview.w, drawPreview.h) / 2} fill="rgba(74,74,82,0.3)" stroke="#D4A853" strokeWidth={1} dash={[6, 3]} listening={false} />}
           {isDrawing && drawPreview && (activeTool === 'star' || activeTool === 'triangle') && <Circle x={drawPreview.x + drawPreview.w / 2} y={drawPreview.y + drawPreview.h / 2} radius={Math.max(drawPreview.w, drawPreview.h) / 2} fill="rgba(212,168,83,0.1)" stroke="#D4A853" strokeWidth={1} dash={[6, 3]} listening={false} />}
           {isDrawing && drawStart && drawPreview && activeTool === 'line' && <Line points={[drawStart.x, drawStart.y, drawStart.x + drawPreview.w * (drawPreview.x >= drawStart.x ? 1 : -1), drawStart.y + drawPreview.h * (drawPreview.y >= drawStart.y ? 1 : -1)]} stroke="#D4A853" strokeWidth={2} dash={[6, 3]} listening={false} />}
           {isDrawing && drawPreview && activeTool === 'text' && <Rect x={drawPreview.x} y={drawPreview.y} width={Math.max(100, drawPreview.w)} height={Math.max(30, drawPreview.h)} fill="rgba(232,228,223,0.05)" stroke="#D4A853" strokeWidth={1} dash={[4, 2]} listening={false} />}
-          {/* Pen tool preview line */}
-          {penPreviewPoints && penPreviewPoints.length >= 4 && (
-            <Line points={penPreviewPoints} stroke="#D4A853" strokeWidth={2} dash={[4, 4]} listening={false} lineCap="round" lineJoin="round" />
+          {/* Pen tool: completed path so far */}
+          {penPathData && (
+            <Path data={penPathData} stroke="#D4A853" strokeWidth={2} fill="transparent" listening={false} lineCap="round" lineJoin="round" />
+          )}
+          {/* Pen tool preview line (bezier curve to cursor) */}
+          {penPreviewPath && (
+            <Path data={penPreviewPath} stroke="#D4A853" strokeWidth={2} fill="transparent" dash={[4, 4]} listening={false} lineCap="round" lineJoin="round" />
           )}
           {/* Pen anchor points */}
           {penPoints.map((pt, i) => (
@@ -972,10 +1590,20 @@ export default function Canvas({ width, height }: CanvasProps) {
           {/* Bezier control point handles */}
           {penPoints.map((pt, i) => {
             const handles: React.ReactNode[] = [];
-            if (pt.cp2) {
+            // handleOut = cp2 (outgoing from pt)
+            if (pt.handleOut) {
+              const cp2Abs = relToAbs(pt.handleOut, pt);
               handles.push(
-                <Line key={`bh-line-${i}`} points={[pt.x, pt.y, pt.cp2.x, pt.cp2.y]} stroke="#6495ED" strokeWidth={1} dash={[2, 2]} listening={false} />,
-                <Circle key={`bh-${i}`} x={pt.cp2.x} y={pt.cp2.y} radius={3} fill="#6495ED" stroke="#fff" strokeWidth={1} listening={false} />
+                <Line key={`bh-line-${i}`} points={[pt.x, pt.y, cp2Abs.x, cp2Abs.y]} stroke="#6495ED" strokeWidth={1} dash={[2, 2]} listening={false} />,
+                <Circle key={`bh-${i}`} x={cp2Abs.x} y={cp2Abs.y} radius={3} fill="#6495ED" stroke="#fff" strokeWidth={1} listening={false} />
+              );
+            }
+            // handleIn = cp1 (incoming to pt)
+            if (pt.handleIn) {
+              const cp1Abs = relToAbs(pt.handleIn, pt);
+              handles.push(
+                <Line key={`bh-line-in-${i}`} points={[pt.x, pt.y, cp1Abs.x, cp1Abs.y]} stroke="#6495ED" strokeWidth={1} dash={[2, 2]} listening={false} />,
+                <Circle key={`bh-in-${i}`} x={cp1Abs.x} y={cp1Abs.y} radius={3} fill="#6495ED" stroke="#fff" strokeWidth={1} listening={false} />
               );
             }
             return handles;
@@ -1031,12 +1659,92 @@ export default function Canvas({ width, height }: CanvasProps) {
           {rubberBand && (rubberBand.w > 2 || rubberBand.h > 2) && (
             <Rect x={rubberBand.x} y={rubberBand.y} width={rubberBand.w} height={rubberBand.h} fill="rgba(100,150,255,0.08)" stroke="#6495ED" strokeWidth={1} dash={[4, 2]} listening={false} />
           )}
+          {/* Path node editing overlay */}
+          {editingPathId && (() => {
+            const pathShape = shapes.find(s => s.id === editingPathId);
+            if (!pathShape || !pathShape.pathPoints || pathShape.pathPoints.length === 0) return null;
+            const pts = pathShape.pathPoints;
+            const editing = selectedAnchorIdx;
+            return (
+              <>
+                {pts.map((pt, i) => {
+                  const isAnchSel = editing === i;
+                  return (
+                    <Group key={`pa-${i}`}>
+                      <Circle
+                        x={pt.x} y={pt.y} radius={isAnchSel ? 6 : 5}
+                        fill={isAnchSel ? '#D4A853' : '#1C1C21'}
+                        stroke={isAnchSel ? '#fff' : '#D4A853'}
+                        strokeWidth={1.5}
+                        draggable
+                        onDragMove={(e) => {
+                          const node = e.target;
+                          const newPts = [...pts];
+                          newPts[i] = { ...newPts[i], x: node.x(), y: node.y() };
+                          updateShape(editingPathId, { pathPoints: newPts });
+                          setSelectedAnchorIdx(i);
+                        }}
+                        onMouseEnter={(e) => { (e.target as Konva.Circle).getStage()!.container().style.cursor = 'move'; }}
+                        onMouseLeave={(e) => { (e.target as Konva.Circle).getStage()!.container().style.cursor = 'default'; }}
+                      />
+                      {pt.cp1 && (
+                        <>
+                          <Line points={[pt.x, pt.y, pt.cp1.x, pt.cp1.y]} stroke="#6495ED" strokeWidth={1} dash={[2, 2]} listening={false} />
+                          <Circle x={pt.cp1.x} y={pt.cp1.y} radius={3} fill="#6495ED" stroke="#fff" strokeWidth={1}
+                            draggable
+                            onDragMove={(e) => {
+                              const node = e.target;
+                              const newPts = [...pts];
+                              newPts[i] = { ...newPts[i], cp1: { x: node.x(), y: node.y() } };
+                              updateShape(editingPathId, { pathPoints: newPts });
+                            }}
+                          />
+                        </>
+                      )}
+                      {pt.cp2 && (
+                        <>
+                          <Line points={[pt.x, pt.y, pt.cp2.x, pt.cp2.y]} stroke="#6495ED" strokeWidth={1} dash={[2, 2]} listening={false} />
+                          <Circle x={pt.cp2.x} y={pt.cp2.y} radius={3} fill="#6495ED" stroke="#fff" strokeWidth={1}
+                            draggable
+                            onDragMove={(e) => {
+                              const node = e.target;
+                              const newPts = [...pts];
+                              newPts[i] = { ...newPts[i], cp2: { x: node.x(), y: node.y() } };
+                              updateShape(editingPathId, { pathPoints: newPts });
+                            }}
+                          />
+                        </>
+                      )}
+                    </Group>
+                  );
+                })}
+                {pts.map((pt, i) => i > 0 ? (
+                  <Line key={`pc-${i}`}
+                    points={[pts[i - 1].x, pts[i - 1].y, pt.x, pt.y]}
+                    stroke="#D4A853" strokeWidth={1} opacity={0.4} listening={false}
+                  />
+                ) : null)}
+              </>
+            );
+          })()}
           <Transformer
             ref={transformerRef}
             boundBoxFunc={(o, n) => (n.width < 10 || n.height < 10 ? o : n)}
-            borderStroke="#D4A853" borderStrokeWidth={1}
-            anchorStroke="#D4A853" anchorFill="#1C1C21" anchorSize={8} anchorCornerRadius={2}
+            borderStroke="#D4A853" borderStrokeWidth={1} borderDash={[4, 4]}
+            anchorStroke="#D4A853" anchorFill="#FFFFFF" anchorSize={8} anchorCornerRadius={4}
             rotateEnabled={true}
+            rotateAnchorOffset={28}
+            rotateAnchorStroke="#D4A853" rotateAnchorFill="#FFFFFF" rotateAnchorSize={10}
+            onTransformStart={() => { shiftRotationSnapRef.current = true; }}
+            onTransform={(e) => {
+              const node = e.target;
+              if (shiftRotationSnapRef.current && (e.evt as unknown as MouseEvent).shiftKey) {
+                const rotation = node.rotation();
+                const snapped = Math.round(rotation / 15) * 15;
+                node.rotation(snapped);
+              }
+            }}
+            onTransformEnd={() => { shiftRotationSnapRef.current = false; }}
             enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right', 'middle-left', 'middle-right', 'top-center', 'bottom-center']}
           />
         </Layer>
@@ -1072,7 +1780,7 @@ export default function Canvas({ width, height }: CanvasProps) {
       {/* Pen tool hint */}
       {activeTool === 'pen' && penPoints.length > 0 && (
         <div className="absolute top-4 right-4 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg text-xs text-[var(--text-secondary)] z-10">
-          点击添加锚点 · 拖拽创建曲线手柄 · 点击起点闭合 · Enter 完成 · Esc 取消
+          点击添加锚点 · 拖拽创建曲线手柄 · Alt+拖拽打破对称 · 点击起点闭合 · Enter 完成 · Esc 完成开放路径
         </div>
       )}
       {activeTool === 'measure' && (
@@ -1082,6 +1790,21 @@ export default function Canvas({ width, height }: CanvasProps) {
       )}
 
       <div className="absolute bottom-3 right-3 px-2 py-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded text-xs text-[var(--text-secondary)] font-mono select-none">{Math.round(canvasZoom * 100)}%</div>
+
+      {/* Component Editing Overlay */}
+      {editingComponent && (
+        <div className="absolute top-0 left-0 right-0 z-20 h-9 flex items-center gap-3 px-4 bg-[#1a1a1a]/95 backdrop-blur border-b border-[#333]">
+          <button
+            onClick={() => exitComponentEditing()}
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:text-white hover:bg-[#333] transition-colors"
+          >
+            <ArrowLeft size={13} />
+            返回
+          </button>
+          <span className="text-xs text-[var(--text-primary)] font-medium">{editingComponent.name}</span>
+          <span className="text-[10px] text-[var(--accent)]">Editing component...</span>
+        </div>
+      )}
     </div>
   );
 }
