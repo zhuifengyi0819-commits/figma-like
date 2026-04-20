@@ -111,19 +111,34 @@ export interface OverlayConfig {
   backdropColor?: string;    // backdrop 颜色
 }
 
+// ==================== Prototype Condition ====================
+
+export type ConditionOperator = '==' | '!=' | '>' | '<' | '>=' | '<=' | 'isTrue' | 'isFalse';
+
+export interface Condition {
+  variableId: string;
+  operator: ConditionOperator;
+  value?: string | number | boolean; // not needed for isTrue/isFalse
+}
+
+// ==================== Interaction ====================
+
 export interface Interaction {
+  id?: string; // optional — store generates one if missing
   trigger: TriggerType;
+  // Conditional: ALL conditions must pass for this interaction to fire
+  conditions?: Condition[];
   action: ActionType;
   targetFrameId?: string;
   url?: string;
   transition?: 'auto' | TransitionType;
   easing?: EasingType;
   duration?: number;
-  delay?: number;         // afterDelay 触发器的延迟(ms)
+  delay?: number;         // afterDelay trigger delay (ms)
   overlay?: OverlayConfig;
-  // stateChange action 参数
+  // stateChange action
   targetState?: ComponentStateType;
-  // setVariable action 参数
+  // setVariable action
   variableId?: string;
   variableValue?: string | number | boolean;
 }
@@ -454,20 +469,6 @@ export interface VariableScope {
 export interface VariableValue {
   variableId: string;
   value: string | number | boolean;
-}
-
-// Condition for conditional prototype flows
-export interface Condition {
-  leftVar: string; // variable name or 'selectedOption' etc.
-  operator: '==' | '!=' | '>' | '<' | '>=' | '<=';
-  rightVal: string;
-}
-
-// Conditional prototype edge
-export interface ConditionalEdge {
-  edgeId: string;
-  conditions: Condition[];
-  logic: 'AND' | 'OR'; // all conditions must match, or any one
 }
 
 export interface ActiveOverlay {

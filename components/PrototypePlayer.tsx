@@ -3,12 +3,36 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape, Interaction, TriggerType, ActiveOverlay, OverlayConfig, ComponentStateType } from '@/lib/types';
+import { Shape, Interaction, TriggerType, ActiveOverlay, OverlayConfig, ComponentStateType, Condition } from '@/lib/types';
 import { isLayoutContainer, containerClipOverflow } from '@/lib/measurement';
 import { computeSmartTransition } from '@/lib/smartAnimate';
 import { getEasingCss } from '@/lib/easing';
 import OverlayPortal from './prototype/OverlayPortal';
 import { X, ArrowLeft, Maximize2 } from 'lucide-react';
+
+/** Evaluate whether all conditions pass given current variable values */
+function evaluateConditions(
+  conditions: Condition[],
+  variables: { id: string; name: string; defaultValue?: string | number | boolean }[],
+  variableValues: { variableId: string; value: string | number | boolean }[]
+): boolean {
+  for (const cond of conditions) {
+    const vDef = variables.find(v => v.id === cond.variableId);
+    const vVal = variableValues.find(vv => vv.variableId === cond.variableId);
+    const current = vVal?.value ?? vDef?.defaultValue;
+    switch (cond.operator) {
+      case 'isTrue': if (!current) return false; break;
+      case 'isFalse': if (current) return false; break;
+      case '==': if (current !== cond.value) return false; break;
+      case '!=': if (current === cond.value) return false; break;
+      case '>': if ((current as number) <= (cond.value as number)) return false; break;
+      case '<': if ((current as number) >= (cond.value as number)) return false; break;
+      case '>=': if ((current as number) < (cond.value as number)) return false; break;
+      case '<=': if ((current as number) > (cond.value as number)) return false; break;
+    }
+  }
+  return true;
+}
 
 function resolveShapeStyle(shape: Shape): React.CSSProperties {
   const s: React.CSSProperties = {
@@ -80,7 +104,14 @@ function useTriggerHandlers({ shape, allShapes, shapeRef, onNavigate, onOverlay 
     const ints = interactions.filter(i => i.trigger === trigger);
     if (!ints || ints.length === 0) return;
 
+    const { variables, variableValues } = useEditorStore.getState();
+
     for (const int of ints) {
+      // Evaluate all conditions (if any) — ALL must pass
+      if (int.conditions && int.conditions.length > 0) {
+        if (!evaluateConditions(int.conditions, variables, variableValues)) continue;
+      }
+
       if (int.action === 'navigateTo' && int.targetFrameId) {
         onNavigate(int.targetFrameId, int.transition, int.duration, int.easing, shape.id);
       } else if (int.action === 'openUrl' && int.url) {
@@ -91,18 +122,14 @@ function useTriggerHandlers({ shape, allShapes, shapeRef, onNavigate, onOverlay 
         const rect = shapeRef.current?.getBoundingClientRect() ?? null;
         onOverlay(int.targetFrameId, int.overlay, shape.id, rect);
       } else if (int.action === 'setVariable' && int.variableId && int.variableValue !== undefined) {
-        // Set variable value in store
         const store = useEditorStore.getState();
         store.setVariableValue(int.variableId, int.variableValue);
-        // Optionally navigate after setting
         if (int.targetFrameId) {
           onNavigate(int.targetFrameId, int.transition, int.duration, int.easing, shape.id);
         }
       } else if (int.action === 'stateChange' && int.targetState) {
-        // Change component state
         const store = useEditorStore.getState();
         store.setShapeState(shape.id, int.targetState as ComponentStateType);
-        // Optionally navigate after state change
         if (int.targetFrameId) {
           onNavigate(int.targetFrameId, int.transition, int.duration, int.easing, shape.id);
         }
