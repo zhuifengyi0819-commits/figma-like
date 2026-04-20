@@ -589,7 +589,7 @@ function FrameRenderer({
 
 export default function Canvas({ width, height }: CanvasProps) {
   const store = useEditorStore();
-  const { shapes, selectedIds, activeTool, canvasZoom, canvasPan, canvasBg, setSelectedIds, clearSelection, updateShape, addShape, deleteShapes, duplicateShapes, setCanvasZoom, setCanvasPan, setViewportSize, setActiveTool, undo, redo, setShowHelp, pushHistory, applyConstraints, copyStyle, pasteStyle, showContextMenu, bringForward, sendBackward, bringToFront, sendToBack, alignShapes, setShowExportModal, panToShapeIds, editingComponentId, exitComponentEditing } = store;
+  const { shapes, selectedIds, activeTool, canvasZoom, canvasPan, canvasBg, setSelectedIds, clearSelection, updateShape, addShape, deleteShapes, duplicateShapes, setCanvasZoom, setCanvasPan, setViewportSize, setActiveTool, undo, redo, setShowHelp, pushHistory, applyConstraints, copyStyle, pasteStyle, showContextMenu, bringForward, sendBackward, bringToFront, sendToBack, alignShapes, setShowExportModal, panToShapeIds, editingComponentId, exitComponentEditing, enterComponentEditing } = store;
 
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -675,8 +675,13 @@ export default function Canvas({ width, height }: CanvasProps) {
     return undefined;
   }, [shapes]);
 
-  // Top-level shapes (no parentId) — frames and loose shapes
-  const topLevelShapes = useMemo(() => shapes.filter(s => !s.parentId), [shapes]);
+  // Top-level shapes — in component editing mode, show only component's direct children
+  const topLevelShapes = useMemo(() => {
+    if (editingComponentId) {
+      return shapes.filter(s => s.parentId === editingComponentId);
+    }
+    return shapes.filter(s => !s.parentId);
+  }, [shapes, editingComponentId]);
 
   const parentPaddingSegs = useMemo(() => {
     if (selectedIds.length !== 1) return [] as ReturnType<typeof computeParentPaddingSegments>;
@@ -1456,6 +1461,21 @@ export default function Canvas({ width, height }: CanvasProps) {
         scaleX={canvasZoom} scaleY={canvasZoom}
         x={canvasPan.x} y={canvasPan.y}
         onClick={handleStageClick}
+        onDblClick={(e) => {
+          const clickedShape = e.target;
+          if (clickedShape === stageRef.current) return;
+          const shapeId = clickedShape.id();
+          if (!shapeId) return;
+          const shape = shapes.find(s => s.id === shapeId);
+          if (!shape) return;
+          if (shape.type === 'component' || shape.type === 'frame') {
+            if (shape.masterComponentId) {
+              enterComponentEditing(shape.masterComponentId);
+            } else if (shape.isMainComponent) {
+              enterComponentEditing(shape.id);
+            }
+          }
+        }}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
