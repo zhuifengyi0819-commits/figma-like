@@ -1,12 +1,14 @@
 'use client';
 
+import { useCallback, useRef, useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape, Interaction } from '@/lib/types';
+import { Shape, Interaction, TriggerType, ActiveOverlay, OverlayConfig } from '@/lib/types';
 import { isLayoutContainer, containerClipOverflow } from '@/lib/measurement';
 import { computeSmartTransition } from '@/lib/smartAnimate';
+import { getEasingCss } from '@/lib/easing';
+import OverlayPortal from './prototype/OverlayPortal';
 import { X, ArrowLeft, Maximize2 } from 'lucide-react';
-import { useState, useCallback, useRef } from 'react';
 
 function resolveShapeStyle(shape: Shape): React.CSSProperties {
   const s: React.CSSProperties = {
@@ -23,12 +25,6 @@ function resolveShapeStyle(shape: Shape): React.CSSProperties {
     s.backgroundColor = shape.fill;
     if (shape.cornerRadius) s.borderRadius = shape.cornerRadius;
     if (isLayoutContainer(shape) && containerClipOverflow(shape)) s.overflow = 'hidden';
-    if (isLayoutContainer(shape) && shape.autoLayout) {
-      s.display = 'flex';
-      s.flexDirection = shape.autoLayout.direction === 'horizontal' ? 'row' : 'column';
-      s.gap = shape.autoLayout.gap;
-      s.padding = `${shape.autoLayout.paddingTop}px ${shape.autoLayout.paddingRight}px ${shape.autoLayout.paddingBottom}px ${shape.autoLayout.paddingLeft}px`;
-    }
   } else if (shape.type === 'circle') {
     const d = (shape.radius || 50) * 2;
     s.width = d; s.height = d; s.borderRadius = '50%'; s.backgroundColor = shape.fill;
@@ -54,34 +50,140 @@ function resolveShapeStyle(shape: Shape): React.CSSProperties {
   return s;
 }
 
-function PrototypeShape({ shape, allShapes, sourceShapeId, onNavigate, onScrollTo, onSwap }: { shape: Shape; allShapes: Shape[]; sourceShapeId?: string; onNavigate: (frameId: string, transition?: string, duration?: number, sourceShapeId?: string) => void; onScrollTo: (frameId: string) => void; onSwap: (frameId: string, transition?: string, duration?: number) => void }) {
-  const handleInteraction = useCallback((trigger: Interaction['trigger']) => {
-    const ints = shape.interactions?.filter(i => i.trigger === trigger);
+/**
+ * Apply component overrides to a shape if it's an instance.
+ */
+function applyOverrides(shape: Shape): Shape {
+  if (!shape.overrides || Object.keys(shape.overrides).length === 0) return shape;
+  const overrides = shape.overrides;
+  const result = { ...shape };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (key in result) {
+      (result as Record<string, unknown>)[key] = value;
+    }
+  }
+  return result;
+}
+
+interface TriggerHandlerProps {
+  shape: Shape;
+  allShapes: Shape[];
+  onNavigate: (frameId: string, transition?: string, duration?: number, easing?: string, sourceShapeId?: string) => void;
+  onOverlay: (targetFrameId: string, config: OverlayConfig, triggerElementId: string) => void;
+}
+
+function useTriggerHandlers({ shape, allShapes, onNavigate, onOverlay }: TriggerHandlerProps) {
+  const interactions = shape.interactions || [];
+
+  const fireInteraction = useCallback((trigger: TriggerType) => {
+    const ints = interactions.filter(i => i.trigger === trigger);
     if (!ints || ints.length === 0) return;
+
     for (const int of ints) {
       if (int.action === 'navigateTo' && int.targetFrameId) {
-        onNavigate(int.targetFrameId, int.transition, int.duration, shape.id);
+        onNavigate(int.targetFrameId, int.transition, int.duration, int.easing, shape.id);
       } else if (int.action === 'openUrl' && int.url) {
         window.open(int.url, '_blank');
-      } else if (int.action === 'scrollTo' && int.targetFrameId) {
-        onScrollTo(int.targetFrameId);
-      } else if (int.action === 'swap' && int.targetFrameId) {
-        onSwap(int.targetFrameId, int.transition, int.duration);
+      } else if (int.action === 'back') {
+        // handled at player level
+      } else if (int.action === 'overlay' && int.targetFrameId && int.overlay) {
+        onOverlay(int.targetFrameId, int.overlay, shape.id);
       }
     }
-  }, [shape.interactions, onNavigate, onScrollTo, onSwap, shape.id]);
+  }, [interactions, onNavigate, onOverlay, shape.id]);
 
-  const hasClick = shape.interactions?.some(i => i.trigger === 'click');
-  const style = resolveShapeStyle(shape);
+  return { fireInteraction, interactions };
+}
+
+interface PrototypeShapeProps {
+  shape: Shape;
+  allShapes: Shape[];
+  onNavigate: (frameId: string, transition?: string, duration?: number, easing?: string, sourceShapeId?: string) => void;
+  onOverlay: (targetFrameId: string, config: OverlayConfig, triggerElementId: string) => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+  onMouseDown?: () => void;
+  onMouseUp?: () => void;
+}
+
+function PrototypeShape({
+  shape,
+  allShapes,
+  onNavigate,
+  onOverlay,
+  onMouseEnter,
+  onMouseLeave,
+  onMouseDown,
+  onMouseUp,
+}: PrototypeShapeProps) {
+  const { fireInteraction, interactions } = useTriggerHandlers({ shape, allShapes, onNavigate, onOverlay });
+
+  const hasClick = interactions.some(i => i.trigger === 'click');
+  const hasHover = interactions.some(i => i.trigger === 'hover');
+  const hasMouseDown = interactions.some(i => i.trigger === 'mouseDown');
+  const hasMouseUp = interactions.some(i => i.trigger === 'mouseUp');
+  const hasMouseEnter = interactions.some(i => i.trigger === 'mouseEnter');
+  const hasMouseLeave = interactions.some(i => i.trigger === 'mouseLeave');
+  const hasWhileDown = interactions.some(i => i.trigger === 'whileDown');
+
+  const [whileDownActive, setWhileDownActive] = useState(false);
+
+  const style = resolveShapeStyle(applyOverrides(shape));
   const children = allShapes.filter(s => s.parentId === shape.id);
+
+  const handleMouseEnter = useCallback(() => {
+    if (hasMouseEnter || hasHover) fireInteraction('mouseEnter');
+    onMouseEnter?.();
+  }, [hasMouseEnter, hasHover, fireInteraction, onMouseEnter]);
+
+  const handleMouseLeave = useCallback(() => {
+    if (hasMouseLeave || hasHover) fireInteraction('mouseLeave');
+    setWhileDownActive(false);
+    onMouseLeave?.();
+  }, [hasMouseLeave, hasHover, fireInteraction, onMouseLeave]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (hasMouseDown) fireInteraction('mouseDown');
+    if (hasWhileDown) setWhileDownActive(true);
+    onMouseDown?.();
+  }, [hasMouseDown, hasWhileDown, fireInteraction, onMouseDown]);
+
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (hasMouseUp) fireInteraction('mouseUp');
+    if (hasWhileDown) setWhileDownActive(false);
+    onMouseUp?.();
+  }, [hasMouseUp, hasWhileDown, fireInteraction, onMouseUp]);
+
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    fireInteraction('click');
+  }, [fireInteraction]);
+
+  const handleMouseMove = useCallback(() => {
+    if (whileDownActive && hasWhileDown) {
+      fireInteraction('whileDown');
+    }
+  }, [whileDownActive, hasWhileDown, fireInteraction]);
+
+  const handleInteraction = (trigger: TriggerType) => fireInteraction(trigger);
+
+  const wrapperProps = {
+    onClick: hasClick ? handleClick : undefined,
+    onMouseEnter: handleMouseEnter,
+    onMouseLeave: handleMouseLeave,
+    onMouseDown: handleMouseDown,
+    onMouseUp: handleMouseUp,
+    onMouseMove: handleMouseMove,
+    className: hasClick ? 'cursor-pointer' : '',
+  };
 
   if (shape.type === 'text') {
     return (
       <span
         style={style}
-        onClick={hasClick ? (e) => { e.stopPropagation(); handleInteraction('click'); } : undefined}
-        onMouseEnter={() => handleInteraction('hover')}
-        className={hasClick ? 'cursor-pointer hover:opacity-80' : ''}
+        {...wrapperProps}
       >
         {shape.text}
       </span>
@@ -91,24 +193,24 @@ function PrototypeShape({ shape, allShapes, sourceShapeId, onNavigate, onScrollT
   if (shape.type === 'image') {
     return (
       <Image
-        src={shape.src ?? ''} alt={shape.name}
+        src={shape.src ?? ''}
+        alt={shape.name}
         style={{ ...style, objectFit: 'cover' } as React.CSSProperties}
-        onClick={hasClick ? (e) => { e.stopPropagation(); handleInteraction('click'); } : undefined}
-        onMouseEnter={() => handleInteraction('hover')}
-        className={hasClick ? 'cursor-pointer' : ''}
+        {...wrapperProps}
       />
     );
   }
 
   return (
-    <div
-      style={style}
-      onClick={hasClick ? (e) => { e.stopPropagation(); handleInteraction('click'); } : undefined}
-      onMouseEnter={() => handleInteraction('hover')}
-      className={hasClick ? 'cursor-pointer' : ''}
-    >
+    <div style={style} {...wrapperProps}>
       {children.map(child => (
-        <PrototypeShape key={child.id} shape={{ ...child, x: child.x - shape.x, y: child.y - shape.y }} allShapes={allShapes} sourceShapeId={sourceShapeId} onNavigate={onNavigate} onScrollTo={onScrollTo} onSwap={onSwap} />
+        <PrototypeShape
+          key={child.id}
+          shape={{ ...child, x: child.x - shape.x, y: child.y - shape.y }}
+          allShapes={allShapes}
+          onNavigate={onNavigate}
+          onOverlay={onOverlay}
+        />
       ))}
     </div>
   );
@@ -124,15 +226,59 @@ export default function PrototypePlayer() {
   const [transitioning, setTransitioning] = useState(false);
   const [transitionClass, setTransitionClass] = useState('');
   const [canGoBack, setCanGoBack] = useState(false);
+  const [activeOverlays, setActiveOverlays] = useState<ActiveOverlay[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const historyStack = useRef<string[]>([]);
 
-  const navigate = useCallback((frameId: string, transition?: string, duration?: number, sourceShapeId?: string) => {
+  // Handle afterDelay triggers
+  const delayTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+  // Register keydown handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Close topmost overlay
+        if (activeOverlays.length > 0) {
+          closeOverlay(activeOverlays[activeOverlays.length - 1].id);
+        } else if (canGoBack) {
+          goBack();
+        } else {
+          setPrototypeMode(false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeOverlays, canGoBack, setPrototypeMode]);
+
+  // Load onLoad triggers when frame first appears
+  useEffect(() => {
+    if (!currentFrameId) return;
+    const frame = allShapes.find(s => s.id === currentFrameId);
+    if (!frame) return;
+
+    const loadInts = frame.interactions?.filter(i => i.trigger === 'onLoad') || [];
+    for (const int of loadInts) {
+      if (int.action === 'navigateTo' && int.targetFrameId) {
+        const dur = int.duration || 300;
+        setTimeout(() => navigate(int.targetFrameId!, int.transition, dur, int.easing, frame.id), int.delay || 0);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const closeOverlay = useCallback((overlayId: string) => {
+    setActiveOverlays(prev => prev.filter(o => o.id !== overlayId));
+  }, []);
+
+  const navigate = useCallback((frameId: string, transition?: string, duration?: number, easing?: string, sourceShapeId?: string) => {
     if (currentFrameId) {
       historyStack.current.push(currentFrameId);
       setCanGoBack(true);
     }
+
     const dur = duration || 300;
+    const eas = easing;
 
     // Resolve 'auto' or undefined transition using smart animate
     let resolvedTransition = transition || 'instant';
@@ -161,10 +307,22 @@ export default function PrototypePlayer() {
         slideUp: 'animate-slide-up',
         slideDown: 'animate-slide-down',
         scale: 'animate-scale',
+        slideLeftRight: 'animate-slide-left-right',
+        slideUpDown: 'animate-slide-up-down',
       };
-      setTransitionClass(classMap[resolvedTransition] || '');
+      const cls = classMap[resolvedTransition] || '';
+      setTransitionClass(cls);
       setCurrentFrameId(frameId);
-      setTimeout(() => { setTransitioning(false); setTransitionClass(''); }, dur);
+
+      // Apply custom easing to the animation
+      if (eas && panelRef.current) {
+        panelRef.current.style.transition = `opacity ${dur}ms ${getEasingCss(eas as Parameters<typeof getEasingCss>[0])}`;
+      }
+
+      setTimeout(() => {
+        setTransitioning(false);
+        setTransitionClass('');
+      }, dur);
     } else {
       setCurrentFrameId(frameId);
     }
@@ -176,71 +334,53 @@ export default function PrototypePlayer() {
     setCanGoBack(historyStack.current.length > 0);
   }, []);
 
-  // scrollTo: scroll the container to bring target frame into view
-  const handleScrollTo = useCallback((frameId: string) => {
-    const container = containerRef.current;
-    if (!container) return;
-    const frame = allShapes.find(s => s.id === frameId);
-    if (!frame) return;
-    // Scroll to frame position within the container
-    const scrollTarget = { x: frame.x, y: frame.y };
-    container.scrollTo({
-      left: scrollTarget.x,
-      top: scrollTarget.y,
-      behavior: 'smooth',
-    });
-  }, [allShapes]);
-
-  // swap: replace current frame without adding to history
-  const handleSwap = useCallback((frameId: string, transition?: string, duration?: number) => {
-    const dur = duration || 300;
-    if (transition && transition !== 'instant') {
-      setTransitioning(true);
-      const classMap: Record<string, string> = {
-        dissolve: 'animate-fade-in',
-        slideLeft: 'animate-slide-left',
-        slideRight: 'animate-slide-right',
-        slideUp: 'animate-slide-up',
-        slideDown: 'animate-slide-down',
-        scale: 'animate-scale',
-      };
-      setTransitionClass(classMap[transition] || '');
-      setCurrentFrameId(frameId);
-      setTimeout(() => { setTransitioning(false); setTransitionClass(''); }, dur);
-    } else {
-      setCurrentFrameId(frameId);
-    }
+  const handleOverlay = useCallback((targetFrameId: string, config: OverlayConfig, triggerElementId: string) => {
+    const newOverlay: ActiveOverlay = {
+      id: `overlay-${Date.now()}`,
+      targetFrameId,
+      triggerElementId,
+      triggerRect: { x: 0, y: 0, width: 0, height: 0 },
+      config,
+    };
+    setActiveOverlays(prev => [...prev, newOverlay]);
   }, []);
 
+  const panelRef = useRef<HTMLDivElement>(null);
   const currentFrame = allShapes.find(s => s.id === currentFrameId);
-  const visibleShapes = currentFrame ? allShapes.filter(s => s.parentId === currentFrameId && s.visible) : allShapes.filter(s => !s.parentId && s.visible);
-
-  // Also collect all pages' shapes with interactions
-  const allPagesFrames = pages.flatMap(p => p.shapes.filter(s => isLayoutContainer(s) && !s.parentId));
+  const visibleShapes = currentFrame
+    ? allShapes.filter(s => s.parentId === currentFrameId && s.visible)
+    : allShapes.filter(s => !s.parentId && s.visible);
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
       {/* Toolbar */}
       <div className="h-10 flex items-center justify-between px-4 bg-[#111] border-b border-[#333]">
         <div className="flex items-center gap-2">
-          <button onClick={goBack} disabled={!canGoBack} className="p-1.5 rounded text-[#999] hover:text-white disabled:opacity-30 transition-colors" title="返回" aria-label="返回">
+          <button
+            onClick={goBack}
+            disabled={!canGoBack}
+            className="p-1.5 rounded text-[#999] hover:text-white disabled:opacity-30 transition-colors"
+            title="返回"
+          >
             <ArrowLeft size={16} />
           </button>
           <span className="text-xs text-[#999]">{currentFrame?.name || '预览'}</span>
         </div>
         <div className="flex items-center gap-2">
-          {/* Frame selector */}
           <select
             value={currentFrameId || ''}
             onChange={e => setCurrentFrameId(e.target.value)}
             className="bg-[#222] border border-[#444] rounded px-2 py-1 text-xs text-[#ccc]"
-            title="选择画框"
           >
-            {allPagesFrames.map(f => (
+            {frames.map(f => (
               <option key={f.id} value={f.id}>{f.name}</option>
             ))}
           </select>
-          <button onClick={() => setPrototypeMode(false)} className="p-1.5 rounded text-[#999] hover:text-white transition-colors" title="退出预览" aria-label="退出预览">
+          <button
+            onClick={() => setPrototypeMode(false)}
+            className="p-1.5 rounded text-[#999] hover:text-white transition-colors"
+            title="退出预览"
+          >
             <X size={16} />
           </button>
         </div>
@@ -249,6 +389,7 @@ export default function PrototypePlayer() {
       {/* Canvas */}
       <div ref={containerRef} className="flex-1 flex items-center justify-center overflow-auto bg-[#0a0a0a]">
         <div
+          ref={panelRef}
           className={`relative ${transitionClass}`}
           style={{
             width: currentFrame?.width || 1920,
@@ -256,7 +397,7 @@ export default function PrototypePlayer() {
             backgroundColor: currentFrame?.fill || '#1A1A1D',
             borderRadius: currentFrame?.cornerRadius || 0,
             overflow: currentFrame && containerClipOverflow(currentFrame) ? 'hidden' : undefined,
-            transition: transitioning ? 'opacity 0.3s' : undefined,
+            transition: transitioning ? `opacity 0.3s ${getEasingCss()}` : undefined,
           }}
         >
           {visibleShapes.map(shape => (
@@ -265,12 +406,18 @@ export default function PrototypePlayer() {
               shape={currentFrame ? { ...shape, x: shape.x - currentFrame.x, y: shape.y - currentFrame.y } : shape}
               allShapes={allShapes}
               onNavigate={navigate}
-              onScrollTo={handleScrollTo}
-              onSwap={handleSwap}
+              onOverlay={handleOverlay}
             />
           ))}
         </div>
       </div>
+
+      {/* Overlay Layer */}
+      <OverlayPortal
+        overlays={activeOverlays}
+        allShapes={allShapes}
+        onClose={closeOverlay}
+      />
 
       {/* Status */}
       <div className="h-7 flex items-center justify-center px-4 bg-[#111] border-t border-[#333]">
