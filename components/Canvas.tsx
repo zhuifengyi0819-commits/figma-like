@@ -7,6 +7,10 @@ import {
   isLayoutContainer,
   measureGapBetweenAABBs,
 } from '@/lib/measurement';
+import {
+  computeChildLayout,
+  computeAutoLayoutChildren,
+} from '@/lib/layout';
 import { BlendMode, CANVAS_HEIGHT, CANVAS_WIDTH, Gradient, PenPoint, Shape, TokenBindings } from '@/lib/types';
 import { useEditorStore } from '@/stores/useEditorStore';
 import {
@@ -352,6 +356,25 @@ function FrameRenderer({
   const blurR = frame.blur?.radius ?? 0;
   useKonvaBlurCache(groupRef as React.RefObject<Konva.Node | null>, blurR, frame.id, fw, fh, frame.blendMode);
 
+  // Pre-compute layout for all children (constraints or auto-layout)
+  const childLayouts = useMemo(() => {
+    if (frame.autoLayout) {
+      return computeAutoLayoutChildren(frame, children, allShapes);
+    }
+    const m = new Map<string, { x: number; y: number; width: number; height: number }>();
+    for (const child of children) {
+      m.set(child.id, computeChildLayout(child, frame, allShapes));
+    }
+    return m;
+  }, [frame, children, allShapes]);
+
+  // Helper: get the render props for a child, applying computed layout
+  const getChildRenderProps = (child: Shape) => {
+    const l = childLayouts.get(child.id);
+    if (l) return { x: l.x, y: l.y, width: l.width, height: l.height };
+    return { x: child.x - frame.x, y: child.y - frame.y };
+  };
+
   return (
     <Group
       ref={groupRef}
@@ -448,7 +471,7 @@ function FrameRenderer({
               result.push(
                 <FrameRenderer
                   key={child.id}
-                  frame={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
+                  frame={{ ...child, ...getChildRenderProps(child) }}
                   allShapes={allShapes}
                   selectedIds={selectedIds}
                   editingTextId={editingTextId}
@@ -463,7 +486,7 @@ function FrameRenderer({
               result.push(
                 <ShapeRenderer
                   key={child.id}
-                  shape={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
+                  shape={{ ...child, ...getChildRenderProps(child) }}
                   isSelected={selectedIds.includes(child.id)}
                   editingTextId={editingTextId}
                   isEditingPath={isEditingPath && child.type === 'path'}
@@ -528,7 +551,7 @@ function FrameRenderer({
             result.push(
               <FrameRenderer
                 key={child.id}
-                frame={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
+                frame={{ ...child, ...getChildRenderProps(child) }}
                 allShapes={allShapes}
                 selectedIds={selectedIds}
                 editingTextId={editingTextId}
@@ -543,7 +566,7 @@ function FrameRenderer({
             result.push(
               <ShapeRenderer
                 key={child.id}
-                shape={{ ...child, x: child.x - frame.x, y: child.y - frame.y }}
+                shape={{ ...child, ...getChildRenderProps(child) }}
                 isSelected={selectedIds.includes(child.id)}
                 editingTextId={editingTextId}
                 isEditingPath={isEditingPath && child.type === 'path'}
