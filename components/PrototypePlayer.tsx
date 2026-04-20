@@ -150,6 +150,8 @@ interface PrototypeShapeProps {
   onMouseLeave?: () => void;
   onMouseDown?: () => void;
   onMouseUp?: () => void;
+  onDrag?: (x: number, y: number) => void;       // whileDragging: during drag
+  onDragEnd?: (x: number, y: number) => void;    // drag: after drag ends
 }
 
 function PrototypeShape({
@@ -162,6 +164,8 @@ function PrototypeShape({
   onMouseLeave,
   onMouseDown,
   onMouseUp,
+  onDrag,
+  onDragEnd,
 }: PrototypeShapeProps) {
   const innerRef = useRef<HTMLElement | null>(null);
   const resolvedRef = shapeRef ?? innerRef;
@@ -174,8 +178,12 @@ function PrototypeShape({
   const hasMouseEnter = interactions.some(i => i.trigger === 'mouseEnter');
   const hasMouseLeave = interactions.some(i => i.trigger === 'mouseLeave');
   const hasWhileDown = interactions.some(i => i.trigger === 'whileDown');
+  const hasWhileDragging = interactions.some(i => i.trigger === 'whileDragging');
+  const hasDrag = interactions.some(i => i.trigger === 'drag');
 
   const [whileDownActive, setWhileDownActive] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartPos = useRef<{ x: number; y: number } | null>(null);
 
   const style = resolveShapeStyle(applyOverrides(shape));
   const children = allShapes.filter(s => s.parentId === shape.id);
@@ -216,6 +224,37 @@ function PrototypeShape({
     }
   }, [whileDownActive, hasWhileDown, fireInteraction]);
 
+  // whileDragging + drag handlers
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    if (!hasWhileDragging && !hasDrag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragStartPos.current = { x: e.clientX, y: e.clientY };
+    setIsDragging(true);
+  }, [hasWhileDragging, hasDrag]);
+
+  const handleDragMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const x = e.clientX - (dragStartPos.current?.x ?? e.clientX) + (shape.x || 0);
+    const y = e.clientY - (dragStartPos.current?.y ?? e.clientY) + (shape.y || 0);
+    if (hasWhileDragging) {
+      fireInteraction('whileDragging');
+    }
+    onDrag?.(x, y);
+  }, [isDragging, hasWhileDragging, fireInteraction, onDrag, shape.x, shape.y]);
+
+  const handleDragEnd = useCallback((e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const x = e.clientX - (dragStartPos.current?.x ?? e.clientX) + (shape.x || 0);
+    const y = e.clientY - (dragStartPos.current?.y ?? e.clientY) + (shape.y || 0);
+    setIsDragging(false);
+    dragStartPos.current = null;
+    if (hasDrag) {
+      fireInteraction('drag');
+    }
+    onDragEnd?.(x, y);
+  }, [isDragging, hasDrag, fireInteraction, onDragEnd, shape.x, shape.y]);
+
   const handleInteraction = (trigger: TriggerType) => fireInteraction(trigger);
 
   const setRef = useCallback((el: HTMLElement | null) => {
@@ -230,10 +269,10 @@ function PrototypeShape({
         onClick={hasClick ? handleClick : undefined}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseMove={handleMouseMove}
-        className={hasClick ? 'cursor-pointer' : ''}
+        onMouseDown={(e) => { handleMouseDown(e); handleDragStart(e); }}
+        onMouseUp={(e) => { handleMouseUp(e); handleDragEnd(e); }}
+        onMouseMove={(e) => { handleMouseMove(); handleDragMove(e); }}
+        className={hasClick || hasWhileDragging ? 'cursor-pointer' : ''}
       >
         {shape.text}
       </span>
@@ -250,10 +289,10 @@ function PrototypeShape({
         onClick={hasClick ? handleClick : undefined}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseMove={handleMouseMove}
-        className={hasClick ? 'cursor-pointer' : ''}
+        onMouseDown={(e) => { handleMouseDown(e); handleDragStart(e); }}
+        onMouseUp={(e) => { handleMouseUp(e); handleDragEnd(e); }}
+        onMouseMove={(e) => { handleMouseMove(); handleDragMove(e); }}
+        className={hasClick || hasWhileDragging ? 'cursor-pointer' : ''}
       />
     );
   }
@@ -265,10 +304,10 @@ function PrototypeShape({
       onClick={hasClick ? handleClick : undefined}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseUp}
-      onMouseMove={handleMouseMove}
-      className={hasClick ? 'cursor-pointer' : ''}
+      onMouseDown={(e) => { handleMouseDown(e); handleDragStart(e); }}
+      onMouseUp={(e) => { handleMouseUp(e); handleDragEnd(e); }}
+      onMouseMove={(e) => { handleMouseMove(); handleDragMove(e); }}
+      className={hasClick || hasWhileDragging ? 'cursor-pointer' : ''}
     >
       {children.map(child => (
         <PrototypeShape
@@ -277,6 +316,8 @@ function PrototypeShape({
           allShapes={allShapes}
           onNavigate={onNavigate}
           onOverlay={onOverlay}
+          onDrag={onDrag}
+          onDragEnd={onDragEnd}
         />
       ))}
     </div>
