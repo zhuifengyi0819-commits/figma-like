@@ -29,6 +29,7 @@ import Konva from 'konva';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Arrow, Circle, Group, Image as KonvaImage, Layer, Line, Path, Rect, RegularPolygon, Stage, Star, Text, Transformer } from 'react-konva';
 import { ArrowLeft } from 'lucide-react';
+import { SelectionOverlay } from '@/components/SelectionOverlay';
 
 interface CanvasProps { width: number; height: number; }
 
@@ -1732,14 +1733,7 @@ export default function Canvas({ width, height }: CanvasProps) {
             }
             return handles;
           })}
-          {/* Smart guide lines */}
-          {snapLines.map((guide, i) =>
-            guide.x !== undefined ? (
-              <Line key={`gx-${i}`} points={[guide.x, -5000, guide.x, 10000]} stroke="#FF6B6B" strokeWidth={0.5} dash={[4, 4]} listening={false} />
-            ) : guide.y !== undefined ? (
-              <Line key={`gy-${i}`} points={[-5000, guide.y, 10000, guide.y]} stroke="#FF6B6B" strokeWidth={0.5} dash={[4, 4]} listening={false} />
-            ) : null
-          )}
+          {/* Smart guide lines rendered via SelectionOverlay (outside Stage) */}
           {/* 相对父容器四边距离（padding 感） */}
           {parentPaddingSegs.map((m, i) => (
             <Group key={`pp-${i}`} listening={false}>
@@ -1780,9 +1774,6 @@ export default function Canvas({ width, height }: CanvasProps) {
               <Text x={(m.x1 + m.x2) / 2 - 10} y={(m.y1 + m.y2) / 2 - 12} text={m.label ?? `${m.dist}`} fontSize={10} fill="#FF6B6B" listening={false} padding={2} />
             </Group>
           ))}
-          {rubberBand && (rubberBand.w > 2 || rubberBand.h > 2) && (
-            <Rect x={rubberBand.x} y={rubberBand.y} width={rubberBand.w} height={rubberBand.h} fill="rgba(100,150,255,0.08)" stroke="#6495ED" strokeWidth={1} dash={[4, 2]} listening={false} />
-          )}
           {/* Path node editing overlay */}
           {editingPathId && (() => {
             const pathShape = shapes.find(s => s.id === editingPathId);
@@ -1873,6 +1864,30 @@ export default function Canvas({ width, height }: CanvasProps) {
           />
         </Layer>
       </Stage>
+
+      {/* SelectionOverlay: rubberBand marquee + smart guide lines (SVG, pointer-events: none) */}
+      <SelectionOverlay
+        marquee={
+          rubberBand && (rubberBand.w > 2 || rubberBand.h > 2)
+            ? {
+                x: rubberBand.x * canvasZoom + canvasPan.x,
+                y: rubberBand.y * canvasZoom + canvasPan.y,
+                width: rubberBand.w * canvasZoom,
+                height: rubberBand.h * canvasZoom,
+              }
+            : null
+        }
+        snapGuides={snapLines.map(g => ({
+          path: g.x !== undefined
+            ? `M ${g.x * canvasZoom + canvasPan.x} ${-5000 * canvasZoom} L ${g.x * canvasZoom + canvasPan.x} ${10000 * canvasZoom}`
+            : g.y !== undefined
+            ? `M ${-5000 * canvasZoom} ${g.y * canvasZoom + canvasPan.y} L ${10000 * canvasZoom} ${g.y * canvasZoom + canvasPan.y}`
+            : '',
+          color: '#FF6B6B',
+        }))}
+        pan={canvasPan}
+        zoom={canvasZoom}
+      />
 
       {editingShape && textareaStyle && (
         <textarea
