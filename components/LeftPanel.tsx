@@ -4,9 +4,11 @@ import { useState } from 'react';
 import LayerPanel from './LayerPanel';
 import ComponentLibrary from './ComponentLibrary';
 import DesignTokenPanel from './DesignTokenPanel';
-import { Layers, LayoutGrid, Palette } from 'lucide-react';
+import TextStylesPanel from './TextStylesPanel';
+import VariantPanel from './VariantPanel';
+import { Layers, LayoutGrid, Palette, Type, GitBranch } from 'lucide-react';
 
-type LeftTab = 'layers' | 'components' | 'tokens';
+type LeftTab = 'layers' | 'components' | 'tokens' | 'textStyles' | 'variants';
 
 export default function LeftPanel() {
   const [tab, setTab] = useState<LeftTab>('layers');
@@ -15,6 +17,8 @@ export default function LeftPanel() {
     { id: 'layers', label: '图层', icon: <Layers size={14} /> },
     { id: 'components', label: '组件库', icon: <LayoutGrid size={14} /> },
     { id: 'tokens', label: '变量', icon: <Palette size={14} /> },
+    { id: 'textStyles', label: '样式', icon: <Type size={14} /> },
+    { id: 'variants', label: '变体', icon: <GitBranch size={14} /> },
   ];
 
   return (
@@ -40,6 +44,8 @@ export default function LeftPanel() {
         {tab === 'layers' && <LayerPanel />}
         {tab === 'components' && <ComponentLibrary />}
         {tab === 'tokens' && <DesignTokenPanel />}
+        {tab === 'textStyles' && <TextStylesPanel />}
+        {tab === 'variants' && <VariantPanel />}
       </div>
     </div>
   );

@@ -3,7 +3,7 @@ import { isLayoutContainer as isFrameLike, containerClipOverflow } from './measu
 
 // ===================== CSS Generation =====================
 
-export function shapeToCss(shape: Shape, _allShapes?: Shape[]): string {
+export function shapeToCss(shape: Shape): string {
   const props: string[] = [];
 
   if (shape.type === 'rect' || shape.type === 'image' || shape.type === 'component' || isFrameLike(shape)) {
@@ -407,7 +407,7 @@ export function shapesToFullHtml(shapes: Shape[]): string {
   lines.push(`    .canvas { position: relative; width: 1920px; height: 1080px; }`);
 
   for (const shape of shapes.filter(s => s.visible)) {
-    lines.push(`    ${shapeToCss(shape, shapes)}`);
+    lines.push(`    ${shapeToCss(shape)}`);
   }
 
   lines.push(`  </style>`);

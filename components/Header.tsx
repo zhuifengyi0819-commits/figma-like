@@ -1,17 +1,14 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Download, Upload, Grid3X3, Keyboard, PaintBucket, Image, FileCode2, FileJson, Play, Maximize, History, Save, Trash2 } from 'lucide-react';
+import { Download, Upload, Grid3X3, Keyboard, PaintBucket, Play, History, Save, Trash2, Monitor } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
-import Konva from 'konva';
-import { shapesToSvg, downloadSvg } from '@/lib/svgExport';
+import ExportModal from './ExportModal';
 import { sanitizeImportedShapes } from '@/lib/sanitizeImportedShapes';
 
 export default function Header() {
-  const { shapes, clearCanvas, canvasZoom, setCanvasZoom, setCanvasPan, setShowHelp, canvasBg, setCanvasBg, pages, activePageId, setPrototypeMode, snapshots, saveSnapshot, restoreSnapshot, deleteSnapshot } = useEditorStore();
+  const { shapes, clearCanvas, canvasZoom, setCanvasZoom, setCanvasPan, setShowHelp, canvasBg, setCanvasBg, pages, activePageId, setPrototypeMode, snapshots, saveSnapshot, restoreSnapshot, deleteSnapshot, setShowDevicePreview, showExportModal, setShowExportModal } = useEditorStore();
   const bgInputRef = useRef<HTMLInputElement>(null);
-  const [exportOpen, setExportOpen] = useState(false);
-  const exportRef = useRef<HTMLDivElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyRef = useRef<HTMLDivElement>(null);
   const [snapName, setSnapName] = useState('');
@@ -22,81 +19,6 @@ export default function Header() {
     setCanvasZoom(1);
     setCanvasPan({ x: 0, y: 0 });
   }, [setCanvasZoom, setCanvasPan]);
-
-  const handleExportJSON = useCallback(() => {
-    const data = JSON.stringify(shapes, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `ai-canvas-${Date.now()}.json`; a.click();
-    URL.revokeObjectURL(url);
-    setExportOpen(false);
-  }, [shapes]);
-
-  const handleExportPNG = useCallback(() => {
-    const stageNode = Konva.stages[0];
-    if (!stageNode) return;
-    const oldScale = { x: stageNode.scaleX(), y: stageNode.scaleY() };
-    const oldPos = { x: stageNode.x(), y: stageNode.y() };
-    stageNode.scale({ x: 2, y: 2 });
-    stageNode.position({ x: 0, y: 0 });
-    stageNode.draw();
-    const dataUrl = stageNode.toDataURL({ pixelRatio: 1, mimeType: 'image/png' });
-    stageNode.scale(oldScale);
-    stageNode.position(oldPos);
-    stageNode.draw();
-    const a = document.createElement('a');
-    a.href = dataUrl; a.download = `ai-canvas-${Date.now()}.png`; a.click();
-    setExportOpen(false);
-  }, []);
-
-  const handleExportSVG = useCallback(() => {
-    const svg = shapesToSvg(shapes, { background: canvasBg });
-    downloadSvg(svg, `ai-canvas-${Date.now()}.svg`);
-    setExportOpen(false);
-  }, [shapes, canvasBg]);
-
-  const handleExportSelectionSVG = useCallback(() => {
-    const { selectedIds } = useEditorStore.getState();
-    if (selectedIds.length === 0) return;
-    const svg = shapesToSvg(shapes, { selectedIds, background: 'transparent' });
-    downloadSvg(svg, `selection-${Date.now()}.svg`);
-    setExportOpen(false);
-  }, [shapes]);
-
-  const handleExportPNG2x = useCallback(() => {
-    const stageNode = Konva.stages[0];
-    if (!stageNode) return;
-    const oldScale = { x: stageNode.scaleX(), y: stageNode.scaleY() };
-    const oldPos = { x: stageNode.x(), y: stageNode.y() };
-    stageNode.scale({ x: 2, y: 2 });
-    stageNode.position({ x: 0, y: 0 });
-    stageNode.draw();
-    const dataUrl = stageNode.toDataURL({ pixelRatio: 1, mimeType: 'image/png' });
-    stageNode.scale(oldScale);
-    stageNode.position(oldPos);
-    stageNode.draw();
-    const a = document.createElement('a');
-    a.href = dataUrl; a.download = `ai-canvas-@2x-${Date.now()}.png`; a.click();
-    setExportOpen(false);
-  }, []);
-
-  const handleExportPNG3x = useCallback(() => {
-    const stageNode = Konva.stages[0];
-    if (!stageNode) return;
-    const oldScale = { x: stageNode.scaleX(), y: stageNode.scaleY() };
-    const oldPos = { x: stageNode.x(), y: stageNode.y() };
-    stageNode.scale({ x: 3, y: 3 });
-    stageNode.position({ x: 0, y: 0 });
-    stageNode.draw();
-    const dataUrl = stageNode.toDataURL({ pixelRatio: 1, mimeType: 'image/png' });
-    stageNode.scale(oldScale);
-    stageNode.position(oldPos);
-    stageNode.draw();
-    const a = document.createElement('a');
-    a.href = dataUrl; a.download = `ai-canvas-@3x-${Date.now()}.png`; a.click();
-    setExportOpen(false);
-  }, []);
 
   const handleImport = useCallback(() => {
     const input = document.createElement('input');
@@ -177,41 +99,14 @@ export default function Header() {
           <Upload size={16} />
         </button>
 
-        <div className="relative" ref={exportRef}>
+        <div className="relative">
           <button
-            onClick={() => setExportOpen(!exportOpen)}
+            onClick={() => setShowExportModal(true)}
             className="p-2 rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-secondary)] transition-colors"
             title="导出"
           >
             <Download size={16} />
           </button>
-          {exportOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} />
-              <div className="absolute right-0 top-full mt-1 z-50 min-w-[180px] py-1 bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl shadow-2xl shadow-black/40 animate-scale-in">
-                <button onClick={handleExportPNG} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
-                  <Image size={14} className="text-[var(--text-tertiary)]" /> PNG @1x
-                </button>
-                <button onClick={handleExportPNG2x} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
-                  <Image size={14} className="text-[var(--text-tertiary)]" /> PNG @2x
-                </button>
-                <button onClick={handleExportPNG3x} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
-                  <Image size={14} className="text-[var(--text-tertiary)]" /> PNG @3x
-                </button>
-                <div className="my-1 border-t border-[var(--border)]" />
-                <button onClick={handleExportSVG} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
-                  <FileCode2 size={14} className="text-[var(--text-tertiary)]" /> 矢量 SVG
-                </button>
-                <button onClick={handleExportSelectionSVG} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors disabled:opacity-30" disabled={useEditorStore.getState().selectedIds.length === 0}>
-                  <Maximize size={14} className="text-[var(--text-tertiary)]" /> 导出选中 SVG
-                </button>
-                <div className="my-1 border-t border-[var(--border)]" />
-                <button onClick={handleExportJSON} className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
-                  <FileJson size={14} className="text-[var(--text-tertiary)]" /> 导出 JSON
-                </button>
-              </div>
-            </>
-          )}
         </div>
 
         <button onClick={() => clearCanvas()} className="p-2 rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--danger)] transition-colors" title="清空画布">
@@ -284,10 +179,21 @@ export default function Header() {
 
         <div className="h-4 w-px bg-[var(--border)] mx-1" />
 
+        {/* Device Preview */}
+        <button
+          onClick={() => setShowDevicePreview(true)}
+          className="p-2 rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-secondary)] transition-colors"
+          title="设备预览 (⌘⇧K)"
+        >
+          <Monitor size={16} />
+        </button>
+
         <button onClick={() => setShowHelp(true)} className="p-2 rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-secondary)] transition-colors" title="快捷键 (?)">
           <Keyboard size={16} />
         </button>
       </div>
+
+      {showExportModal && <ExportModal onClose={() => setShowExportModal(false)} />}
     </header>
   );
 }

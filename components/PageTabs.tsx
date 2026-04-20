@@ -1,14 +1,16 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Plus, X, Copy } from 'lucide-react';
+import { Plus, X, Copy, GripVertical } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
 export default function PageTabs() {
-  const { pages, activePageId, addPage, deletePage, renamePage, setActivePageId, duplicatePage } = useEditorStore();
+  const { pages, activePageId, addPage, deletePage, renamePage, setActivePageId, duplicatePage, reorderPages } = useEditorStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const [draggingPageId, setDraggingPageId] = useState<string | null>(null);
+  const [dragOverPageId, setDragOverPageId] = useState<string | null>(null);
 
   useEffect(() => {
     if (editingId && inputRef.current) { inputRef.current.focus(); inputRef.current.select(); }
@@ -26,11 +28,33 @@ export default function PageTabs() {
       {pages.map(page => (
         <div
           key={page.id}
-          className={`group flex items-center gap-1 px-3 py-1 rounded-t text-[11px] cursor-pointer transition-colors select-none min-w-0 ${
+          draggable
+          onDragStart={() => setDraggingPageId(page.id)}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (draggingPageId !== page.id) setDragOverPageId(page.id);
+          }}
+          onDragLeave={() => setDragOverPageId(null)}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (draggingPageId && dragOverPageId && draggingPageId !== dragOverPageId) {
+              reorderPages(draggingPageId, dragOverPageId);
+            }
+            setDraggingPageId(null);
+            setDragOverPageId(null);
+          }}
+          onDragEnd={() => {
+            setDraggingPageId(null);
+            setDragOverPageId(null);
+          }}
+          className={`group flex items-center gap-1 px-1 py-1 rounded-t text-[11px] cursor-pointer transition-colors select-none min-w-0 border-t border-x ${
             page.id === activePageId
-              ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] border-t border-x border-[var(--border)]'
-              : 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
-          }`}
+              ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] border-[var(--border)]'
+              : 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] border-transparent'
+          }
+          ${dragOverPageId === page.id && draggingPageId !== page.id ? 'border-t-2 border-t-[var(--accent)]' : ''}
+          ${draggingPageId === page.id ? 'opacity-50' : ''}
+          `}
           onClick={() => setActivePageId(page.id)}
           onDoubleClick={(e) => {
             e.stopPropagation();
@@ -38,6 +62,7 @@ export default function PageTabs() {
             setEditName(page.name);
           }}
         >
+          <GripVertical size={10} className="text-[var(--text-tertiary)] flex-shrink-0 opacity-0 group-hover:opacity-100 cursor-grab" />
           {editingId === page.id ? (
             <input
               ref={inputRef}

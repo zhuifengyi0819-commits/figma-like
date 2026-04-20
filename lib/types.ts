@@ -1,5 +1,5 @@
 export type ShapeType = 'rect' | 'circle' | 'text' | 'line' | 'image' | 'star' | 'arrow' | 'triangle' | 'component' | 'frame' | 'group' | 'path';
-export type ToolType = 'select' | 'rect' | 'circle' | 'text' | 'line' | 'hand' | 'star' | 'triangle' | 'image' | 'frame' | 'pen' | 'measure';
+export type ToolType = 'select' | 'rect' | 'circle' | 'text' | 'line' | 'hand' | 'star' | 'triangle' | 'image' | 'frame' | 'pen' | 'measure' | 'eyedropper';
 
 export interface Shadow {
   color: string;
@@ -25,6 +25,7 @@ export interface AutoLayout {
   paddingLeft: number;
   alignItems: 'start' | 'center' | 'end' | 'stretch';
   justifyContent: 'start' | 'center' | 'end' | 'space-between';
+  wrap?: boolean; // Auto Layout wrap (Figma only supports horizontal direction for wrap)
 }
 
 export interface PathPoint {
@@ -34,10 +35,24 @@ export interface PathPoint {
   cp2?: { x: number; y: number };
 }
 
+/** Re-exported PenPoint for use in editor store */
+export type { PenPoint } from './penTool';
+
+// Constraint axis values (Figma-style 9-point grid)
+export type ConstraintAxis = 'min' | 'center' | 'max' | 'stretch';
+
 // Constraints for child shapes relative to parent frame
 export interface Constraints {
-  horizontal: 'left' | 'right' | 'center' | 'leftRight' | 'scale';
-  vertical: 'top' | 'bottom' | 'center' | 'topBottom' | 'scale';
+  horizontal: ConstraintAxis;
+  vertical: ConstraintAxis;
+}
+
+// Min/Max dimension constraints
+export interface MinMaxDimensions {
+  minWidth?: number;
+  maxWidth?: number;
+  minHeight?: number;
+  maxHeight?: number;
 }
 
 export type TextSizing = 'fixed' | 'autoWidth' | 'autoHeight';
@@ -72,8 +87,17 @@ export interface Interaction {
   action: 'navigateTo' | 'back' | 'openUrl' | 'swap' | 'scrollTo';
   targetFrameId?: string;
   url?: string;
-  transition?: 'instant' | 'dissolve' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown';
+  transition?: 'auto' | 'instant' | 'dissolve' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown' | 'scale';
   duration?: number;
+}
+
+// Token bindings (key = property name, value = token id) — resolved at render time
+export interface TokenBindings {
+  fill?: string;
+  stroke?: string;
+  opacity?: string;
+  cornerRadius?: string;
+  fontSize?: string;
 }
 
 export interface Shape {
@@ -123,6 +147,12 @@ export interface Shape {
   // Constraints (children of frames)
   constraints?: Constraints;
 
+  // Min/Max dimension constraints
+  minWidth?: number;
+  maxWidth?: number;
+  minHeight?: number;
+  maxHeight?: number;
+
   // Text sizing mode
   textSizing?: TextSizing;
 
@@ -136,6 +166,7 @@ export interface Shape {
   /** 预留：蒙版 / 布尔（尚无渲染逻辑） */
   maskSourceId?: string;
   booleanOp?: 'union' | 'subtract' | 'intersect' | 'exclude';
+  booleanSourceIds?: [string, string]; // [基准图形ID, 操作图形ID] (布尔运算结果专用)
 
   fills?: Fill[];
   shadows?: Shadow[];
@@ -151,6 +182,13 @@ export interface Shape {
 
   // Design token references (key = property name, value = token id)
   tokenRefs?: Record<string, string>;
+
+  // Token bindings (key = property name, value = token id) — resolved at render time
+  tokenBindings?: TokenBindings;
+
+
+  // Text style reference (applied from global text styles)
+  textStyleId?: string;
 }
 
 // ==================== Multi-page ====================
@@ -226,6 +264,18 @@ export interface ComponentTemplate {
   width: number;
   height: number;
   shapes: Omit<Shape, 'id' | 'name' | 'visible' | 'locked'>[];
+}
+
+export interface TextStyle {
+  id: string;
+  name: string;
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: string;
+  fill: string;
+  lineHeight?: number;
+  letterSpacing?: number;
+  textAlign?: 'left' | 'center' | 'right' | 'justify';
 }
 
 export const DEFAULT_SHAPE_PROPS: Omit<Shape, 'id' | 'type' | 'x' | 'y' | 'name'> = {

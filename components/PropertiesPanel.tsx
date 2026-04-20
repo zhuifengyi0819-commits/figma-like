@@ -1,7 +1,7 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape, Shadow, Gradient, Fill, AutoLayout, Interaction, Constraints, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT } from '@/lib/types';
+import { Shape, Shadow, Gradient, Fill, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, TokenBindings, ConstraintAxis } from '@/lib/types';
 import {
   ArrowUp, ArrowDown, Trash2, Copy, Move, Plus,
   AlignLeft, AlignCenterHorizontal, AlignRight,
@@ -9,10 +9,12 @@ import {
   FlipHorizontal, FlipVertical,
   AlignHorizontalSpaceBetween, AlignVerticalSpaceBetween,
   ArrowRightLeft, ArrowUpDown, LayoutGrid,
-  Component, Unlink, Zap, MousePointer2, Link,
-  Download,
+  Component, Unlink, Zap, Link,
+  Download, Combine, Minus, Layers, X,
 } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
+import { canDoBoolean } from '@/lib/boolean';
+import { canBeMaskSource } from '@/lib/maskUtils';
 import ColorPicker from './ColorPicker';
 import { shapesToSvg, downloadSvg } from '@/lib/svgExport';
 import { shapeToCss } from '@/lib/codeGen';
@@ -53,6 +55,87 @@ function IconBtn({ icon, label, onClick, active, danger }: { icon: React.ReactNo
   );
 }
 
+function TokenPicker({ property, currentTokenId, onSelect, onClose }: {
+  property: keyof TokenBindings;
+  currentTokenId?: string;
+  onSelect: (tokenId: string) => void;
+  onClose: () => void;
+}) {
+  const { themes, activeThemeId } = useEditorStore();
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  const activeTheme = themes.find(t => t.id === activeThemeId);
+  if (!activeTheme) return null;
+
+  // Filter tokens by property type
+  const categoryMap: Record<keyof TokenBindings, DesignToken['category'][]> = {
+    fill: ['color'],
+    stroke: ['color'],
+    opacity: ['spacing'],
+    cornerRadius: ['borderRadius'],
+    fontSize: ['fontSize'],
+  };
+  const categories = categoryMap[property] || ['color'];
+  const tokens = activeTheme.tokens.filter(t => categories.includes(t.category));
+
+  return (
+    <div ref={ref} className="absolute left-0 top-full mt-1 z-50 w-48 p-2 bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl shadow-2xl shadow-black/40 animate-scale-in">
+      <div className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">绑定 Token</div>
+      {tokens.length === 0 ? (
+        <div className="text-[10px] text-[var(--text-tertiary)] py-2 text-center">无可用 Token</div>
+      ) : (
+        <div className="space-y-0.5 max-h-48 overflow-y-auto">
+          {tokens.map(token => (
+            <button
+              key={token.id}
+              onClick={() => { onSelect(token.id); onClose(); }}
+              className={`w-full flex items-center gap-2 px-2 py-1 rounded text-[11px] transition-colors ${
+                currentTokenId === token.id
+                  ? 'bg-[var(--accent)]/20 text-[var(--accent)]'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
+              }`}
+            >
+              {token.category === 'color' && (
+                <div className="w-4 h-4 rounded border border-[var(--border)]" style={{ backgroundColor: token.value }} />
+              )}
+              <span className="flex-1 text-left truncate">{token.name}</span>
+              <span className="text-[9px] text-[var(--text-tertiary)] font-mono">{token.value}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TokenBoundIndicator({ tokenName, tokenValue, onUnbind }: {
+  tokenId: string;
+  tokenName: string;
+  tokenValue: string;
+  onUnbind: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-[var(--accent)]/10 border border-[var(--accent)]/20">
+      <div className="w-4 h-4 rounded border border-[var(--border)]" style={{ backgroundColor: tokenValue }} />
+      <span className="flex-1 text-[10px] text-[var(--accent)] truncate">{tokenName}</span>
+      <button
+        onClick={onUnbind}
+        className="p-0.5 text-[var(--text-tertiary)] hover:text-[var(--danger)] transition-colors"
+        title="取消绑定"
+        aria-label="取消绑定"
+      >
+        <Unlink size={10} />
+      </button>
+    </div>
+  );
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="space-y-2">
@@ -63,7 +146,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function InteractionEditor({ shape }: { shape: Shape }) {
-  const { addInteraction, removeInteraction, updateInteraction, shapes, pages } = useEditorStore();
+  const { addInteraction, removeInteraction, updateInteraction, pages } = useEditorStore();
   const interactions = shape.interactions || [];
   const allFrames = pages.flatMap(p => p.shapes.filter(s => (s.type === 'frame' || s.type === 'group') && !s.parentId));
 
@@ -114,10 +197,11 @@ function InteractionEditor({ shape }: { shape: Shape }) {
                 <option value="back">返回</option>
                 <option value="openUrl">打开链接</option>
                 <option value="scrollTo">滚动到</option>
+                <option value="swap">交换画框</option>
               </select>
             </div>
           </div>
-          {int.action === 'navigateTo' && (
+          {(int.action === 'navigateTo' || int.action === 'scrollTo' || int.action === 'swap') && (
             <div>
               <label className="text-[9px] text-[var(--text-tertiary)]">目标画框</label>
               <select
@@ -145,19 +229,28 @@ function InteractionEditor({ shape }: { shape: Shape }) {
           <div className="grid grid-cols-2 gap-1.5">
             <div>
               <label className="text-[9px] text-[var(--text-tertiary)]">过渡</label>
-              <select
-                value={int.transition || 'instant'}
-                onChange={e => updateInteraction(shape.id, idx, { transition: e.target.value as Interaction['transition'] })}
-                className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
-                title="过渡效果"
-              >
-                <option value="instant">立即</option>
-                <option value="dissolve">渐变</option>
-                <option value="slideLeft">左滑</option>
-                <option value="slideRight">右滑</option>
-                <option value="slideUp">上滑</option>
-                <option value="slideDown">下滑</option>
-              </select>
+              <div className="relative">
+                <select
+                  value={int.transition || 'instant'}
+                  onChange={e => updateInteraction(shape.id, idx, { transition: e.target.value as Interaction['transition'] })}
+                  className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
+                  title="过渡效果"
+                >
+                  <option value="auto">自动</option>
+                  <option value="instant">立即</option>
+                  <option value="dissolve">渐变</option>
+                  <option value="slideLeft">左滑</option>
+                  <option value="slideRight">右滑</option>
+                  <option value="slideUp">上滑</option>
+                  <option value="slideDown">下滑</option>
+                  <option value="scale">缩放</option>
+                </select>
+                {int.transition === 'auto' && (
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[8px] text-[var(--accent)] font-medium pointer-events-none">
+                    Auto
+                  </span>
+                )}
+              </div>
             </div>
             <div>
               <label className="text-[9px] text-[var(--text-tertiary)]">时长</label>
@@ -258,13 +351,15 @@ function ComponentSection({ shape }: { shape: Shape }) {
 }
 
 export default function PropertiesPanel() {
-  const { shapes, selectedIds, updateShape, deleteShapes, duplicateShapes, bringForward, sendBackward, pushHistory, alignShapes, applyAutoLayout } = useEditorStore();
+  const { shapes, selectedIds, updateShape, updateShapes, deleteShapes, duplicateShapes, bringForward, sendBackward, pushHistory, alignShapes, applyAutoLayout, applyBooleanOperation, addTextStyle, textStyles, applyTextStyle, bindToken, unbindToken, themes, activeThemeId } = useEditorStore();
 
   const selected = shapes.filter(s => selectedIds.includes(s.id));
   const single = selected.length === 1 ? selected[0] : null;
   const isLine = single?.type === 'line' || single?.type === 'arrow';
   const isFrame = single?.type === 'frame' || single?.type === 'group';
   const isPath = single?.type === 'path';
+
+  const [tokenPickerFor, setTokenPickerFor] = useState<keyof TokenBindings | null>(null);
 
   const historyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyPushed = useRef(false);
@@ -280,8 +375,8 @@ export default function PropertiesPanel() {
 
   const update = useCallback((u: Partial<Shape>) => {
     debouncedPushHistory();
-    selectedIds.forEach(id => updateShape(id, u));
-  }, [selectedIds, updateShape, debouncedPushHistory]);
+    updateShapes(selectedIds, u);
+  }, [selectedIds, updateShapes, debouncedPushHistory]);
 
   const updateShadow = useCallback((idx: number, patch: Partial<Shadow>) => {
     debouncedPushHistory();
@@ -359,12 +454,14 @@ export default function PropertiesPanel() {
   }, [selectedIds, updateShape, debouncedPushHistory]);
 
   const updateAutoLayout = useCallback((patch: Partial<AutoLayout>) => {
-    if (!single) return;
+    if (!selectedIds[0]) return;
+    const currentShape = shapes.find(s => s.id === selectedIds[0]);
+    if (!currentShape) return;
     debouncedPushHistory();
-    const current = single.autoLayout || DEFAULT_AUTO_LAYOUT;
-    updateShape(single.id, { autoLayout: { ...current, ...patch } });
-    setTimeout(() => applyAutoLayout(single.id), 0);
-  }, [single, updateShape, debouncedPushHistory, applyAutoLayout]);
+    const current = currentShape.autoLayout || DEFAULT_AUTO_LAYOUT;
+    updateShape(currentShape.id, { autoLayout: { ...current, ...patch } });
+    setTimeout(() => applyAutoLayout(currentShape.id), 0);
+  }, [selectedIds, shapes, updateShape, debouncedPushHistory, applyAutoLayout]);
 
   if (selected.length === 0) {
     return (
@@ -414,7 +511,42 @@ export default function PropertiesPanel() {
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <NumInput label="旋转" value={Math.round(single.rotation)} onChange={v => update({ rotation: v })} suffix="°" min={-360} max={360} />
-                <NumInput label="不透明度" value={Math.round(single.opacity * 100)} onChange={v => update({ opacity: v / 100 })} suffix="%" min={0} max={100} />
+                {(() => {
+                  const opacityBinding = single.tokenBindings?.opacity;
+                  const boundToken = opacityBinding ? (themes.find(t => t.id === activeThemeId)?.tokens.find(tok => tok.id === opacityBinding) ?? null) : null;
+                  return (
+                    <div className="relative">
+                      {boundToken ? (
+                        <TokenBoundIndicator
+                          tokenId={opacityBinding ?? ''}
+                          tokenName={String(boundToken.name ?? '')}
+                          tokenValue={boundToken.value ?? ''}
+                          onUnbind={() => unbindToken(single.id, 'opacity')}
+                        />
+                      ) : (
+                        <NumInput label="不透明度" value={Math.round(single.opacity * 100)} onChange={v => update({ opacity: v / 100 })} suffix="%" min={0} max={100} />
+                      )}
+                      <button
+                        onClick={() => setTokenPickerFor(tokenPickerFor === 'opacity' ? null : 'opacity')}
+                        className={`absolute right-0 top-3 -translate-y-1/2 p-1 rounded transition-colors ${opacityBinding ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)] hover:text-[var(--accent)]'}`}
+                        title={opacityBinding ? '取消绑定' : '绑定 Token'}
+                        aria-label={opacityBinding ? '取消绑定' : '绑定 Token'}
+                      >
+                        <Link size={12} />
+                      </button>
+                      {tokenPickerFor === 'opacity' && (
+                        <div className="absolute left-0 top-full mt-1 z-50">
+                          <TokenPicker
+                            property="opacity"
+                            currentTokenId={opacityBinding}
+                            onSelect={id => { bindToken(single.id, 'opacity', id); setTokenPickerFor(null); }}
+                            onClose={() => setTokenPickerFor(null)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
               <div className="flex items-center gap-1 pt-1">
                 <span className="text-[10px] text-[var(--text-tertiary)] mr-1">翻转</span>
@@ -443,7 +575,42 @@ export default function PropertiesPanel() {
                   <NumInput label="H" value={Math.round(single.height || 0)} onChange={v => update({ height: v })} suffix="px" min={1} />
                 </div>
                 {(single.type === 'rect' || isFrame) && (
-                  <NumInput label="圆角" value={single.cornerRadius || 0} onChange={v => update({ cornerRadius: v })} suffix="px" min={0} max={200} />
+                  (() => {
+                    const crBinding = single.tokenBindings?.cornerRadius;
+                    const boundToken = crBinding ? (themes.find(t => t.id === activeThemeId)?.tokens.find(tok => tok.id === crBinding) ?? null) : null;
+                    return (
+                      <div className="relative">
+                        {boundToken ? (
+                          <TokenBoundIndicator
+                            tokenId={crBinding ?? ''}
+                            tokenName={String(boundToken.name ?? '')}
+                            tokenValue={boundToken.value ?? ''}
+                            onUnbind={() => unbindToken(single.id, 'cornerRadius')}
+                          />
+                        ) : (
+                          <NumInput label="圆角" value={single.cornerRadius || 0} onChange={v => update({ cornerRadius: v })} suffix="px" min={0} max={200} />
+                        )}
+                        <button
+                          onClick={() => setTokenPickerFor(tokenPickerFor === 'cornerRadius' ? null : 'cornerRadius')}
+                          className={`absolute right-0 top-3 -translate-y-1/2 p-1 rounded transition-colors ${crBinding ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)] hover:text-[var(--accent)]'}`}
+                          title={crBinding ? '取消绑定' : '绑定 Token'}
+                          aria-label={crBinding ? '取消绑定' : '绑定 Token'}
+                        >
+                          <Link size={12} />
+                        </button>
+                        {tokenPickerFor === 'cornerRadius' && (
+                          <div className="absolute left-0 top-full mt-1 z-50">
+                            <TokenPicker
+                              property="cornerRadius"
+                              currentTokenId={crBinding}
+                              onSelect={id => { bindToken(single.id, 'cornerRadius', id); setTokenPickerFor(null); }}
+                              onClose={() => setTokenPickerFor(null)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()
                 )}
                 {isFrame && (
                   <div className="flex items-center gap-2 pt-1">
@@ -469,35 +636,110 @@ export default function PropertiesPanel() {
             {/* Constraints — only for children of frames */}
             {single.parentId && (
               <Section title="约束">
-                <div className="space-y-2">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider">水平</label>
-                    <div className="grid grid-cols-5 gap-0.5">
-                      {([['left', '左'], ['right', '右'], ['center', '中'], ['leftRight', '两端'], ['scale', '缩放']] as [Constraints['horizontal'], string][]).map(([v, l]) => (
+                <div className="space-y-3">
+                  {/* 3x3 constraint grid */}
+                  <div className="space-y-1">
+                    <div className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider">对齐</div>
+                    <div className="grid grid-cols-3 gap-1 w-20 mx-auto">
+                      {([
+                        ['top-left', 'top', 'min'],
+                        ['top-center', 'top', 'center'],
+                        ['top-right', 'top', 'max'],
+                        ['left', 'min', 'center'],
+                        ['center', 'min', 'center'],
+                        ['right', 'max', 'center'],
+                        ['bottom-left', 'bottom', 'min'],
+                        ['bottom-center', 'bottom', 'center'],
+                        ['bottom-right', 'bottom', 'max'],
+                      ] as [string, ConstraintAxis, ConstraintAxis][]).map(([pos, v, h]) => (
                         <button
-                          key={v}
-                          onClick={() => update({ constraints: { ...(single.constraints || { horizontal: 'left', vertical: 'top' }), horizontal: v } })}
-                          className={`py-1 text-[9px] rounded transition-colors ${(single.constraints?.horizontal || 'left') === v ? 'bg-[var(--accent)] text-[var(--bg-deep)]' : 'bg-[var(--bg-elevated)] text-[var(--text-secondary)]'}`}
-                          aria-label={l}
-                        >
-                          {l}
-                        </button>
+                          key={pos}
+                          onClick={() => update({ constraints: { horizontal: h, vertical: v } })}
+                          className={`w-6 h-6 rounded border text-[8px] flex items-center justify-center ${
+                            (single.constraints?.horizontal || 'min') === h && (single.constraints?.vertical || 'min') === v
+                              ? "bg-[var(--accent)] border-[var(--accent)] text-white"
+                              : "bg-[var(--bg-elevated)] border-[var(--border)] text-[var(--text-tertiary)] hover:border-[var(--accent)]"
+                          }`}
+                          title={pos}
+                        />
                       ))}
                     </div>
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider">垂直</label>
-                    <div className="grid grid-cols-5 gap-0.5">
-                      {([['top', '上'], ['bottom', '下'], ['center', '中'], ['topBottom', '两端'], ['scale', '缩放']] as [Constraints['vertical'], string][]).map(([v, l]) => (
-                        <button
-                          key={v}
-                          onClick={() => update({ constraints: { ...(single.constraints || { horizontal: 'left', vertical: 'top' }), vertical: v } })}
-                          className={`py-1 text-[9px] rounded transition-colors ${(single.constraints?.vertical || 'top') === v ? 'bg-[var(--accent)] text-[var(--bg-deep)]' : 'bg-[var(--bg-elevated)] text-[var(--text-secondary)]'}`}
-                          aria-label={l}
-                        >
-                          {l}
-                        </button>
-                      ))}
+
+                  {/* Dropdown selects for constraints */}
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="text-[10px] text-[var(--text-tertiary)] block mb-1">水平</label>
+                      <select
+                        value={single.constraints?.horizontal || 'min'}
+                        onChange={e => update({ constraints: { ...(single.constraints || { horizontal: 'min', vertical: 'min' }), horizontal: e.target.value as ConstraintAxis } })}
+                        className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-2 py-1 text-xs"
+                      >
+                        <option value="min">左</option>
+                        <option value="center">居中</option>
+                        <option value="max">右</option>
+                        <option value="stretch">拉伸</option>
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10px] text-[var(--text-tertiary)] block mb-1">垂直</label>
+                      <select
+                        value={single.constraints?.vertical || 'min'}
+                        onChange={e => update({ constraints: { ...(single.constraints || { horizontal: 'min', vertical: 'min' }), vertical: e.target.value as ConstraintAxis } })}
+                        className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-2 py-1 text-xs"
+                      >
+                        <option value="min">上</option>
+                        <option value="center">居中</option>
+                        <option value="max">下</option>
+                        <option value="stretch">拉伸</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Min/Max Size */}
+                  <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
+                    <div className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider">尺寸限制</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-[var(--text-tertiary)] w-3">W</span>
+                        <input
+                          type="number"
+                          value={single.minWidth || ''}
+                          onChange={e => update({ minWidth: Number(e.target.value) || undefined })}
+                          placeholder="最小"
+                          className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-xs"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-[var(--text-tertiary)] w-3">W</span>
+                        <input
+                          type="number"
+                          value={single.maxWidth || ''}
+                          onChange={e => update({ maxWidth: Number(e.target.value) || undefined })}
+                          placeholder="最大"
+                          className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-xs"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-[var(--text-tertiary)] w-3">H</span>
+                        <input
+                          type="number"
+                          value={single.minHeight || ''}
+                          onChange={e => update({ minHeight: Number(e.target.value) || undefined })}
+                          placeholder="最小"
+                          className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-xs"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-[var(--text-tertiary)] w-3">H</span>
+                        <input
+                          type="number"
+                          value={single.maxHeight || ''}
+                          onChange={e => update({ maxHeight: Number(e.target.value) || undefined })}
+                          placeholder="最大"
+                          className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-xs"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -578,6 +820,18 @@ export default function PropertiesPanel() {
                         ))}
                       </div>
                     </div>
+                    {single.autoLayout.direction === 'horizontal' && (
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-[10px] text-[var(--text-secondary)]">自动换行</span>
+                        <button
+                          onClick={() => updateAutoLayout({ wrap: !single.autoLayout!.wrap })}
+                          className={`w-8 h-4 rounded-full transition-colors flex-shrink-0 ${single.autoLayout.wrap ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}`}
+                          aria-label="自动换行"
+                        >
+                          <div className={`w-3 h-3 rounded-full bg-white mx-0.5 transition-transform ${single.autoLayout.wrap ? 'translate-x-4' : ''}`} />
+                        </button>
+                      </div>
+                    )}
                   </>
                 )}
               </Section>
@@ -592,6 +846,52 @@ export default function PropertiesPanel() {
                   className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded-md px-2 py-1.5 text-sm text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none transition-colors resize-none"
                   rows={2}
                 />
+                {/* Text Style Applied */}
+                {textStyles.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider">文本样式</label>
+                      {single.textStyleId && (
+                        <button
+                          onClick={() => update({ textStyleId: undefined })}
+                          className="p-0.5 text-[var(--text-tertiary)] hover:text-[var(--danger)] transition-colors"
+                          title="移除样式引用（保留当前属性）"
+                        >
+                          <X size={10} />
+                        </button>
+                      )}
+                    </div>
+                    <select
+                      value={textStyles.find(s => 
+                        single.fontFamily === s.fontFamily &&
+                        single.fontSize === s.fontSize &&
+                        single.fontWeight === s.fontWeight &&
+                        single.fill === s.fill
+                      )?.id || ''}
+                      onChange={e => {
+                        if (e.target.value) {
+                          applyTextStyle([single.id], e.target.value);
+                        } else {
+                          update({ textStyleId: undefined });
+                        }
+                      }}
+                      className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    >
+                      <option value="">无样式</option>
+                      {textStyles.map(s => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                    {single.textStyleId && (
+                      <div className="flex items-center gap-1 text-[9px] text-[var(--accent)]">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: textStyles.find(s => s.id === single.textStyleId)?.fill }} />
+                        已应用: {textStyles.find(s => s.id === single.textStyleId)?.name}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {/* Text sizing mode */}
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider">调整模式</label>
@@ -675,6 +975,27 @@ export default function PropertiesPanel() {
                     </button>
                   ))}
                 </div>
+                {/* Save as text style */}
+                <button
+                  onClick={() => {
+                    const name = prompt('样式名称:');
+                    if (name) {
+                      addTextStyle({
+                        name,
+                        fontFamily: single.fontFamily || 'sans-serif',
+                        fontSize: single.fontSize || 16,
+                        fontWeight: single.fontWeight || 'normal',
+                        fill: single.fill || '#E8E4DF',
+                        lineHeight: single.lineHeight,
+                        letterSpacing: single.letterSpacing,
+                        textAlign: (single.textAlign || 'left') as 'left' | 'center' | 'right',
+                      });
+                    }
+                  }}
+                  className="w-full mt-1 py-1.5 text-xs text-[var(--text-secondary)] border border-dashed border-[var(--border)] rounded hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                >
+                  + 保存当前为新样式
+                </button>
               </Section>
             )}
 
@@ -683,18 +1004,58 @@ export default function PropertiesPanel() {
               <Section title="填充">
                 {fills.map((f, i) => (
                   <div key={i} className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <ColorPicker
-                        label={fills.length > 1 ? `填充 ${i + 1}` : '填充'}
-                        value={f.color || single.fill}
-                        gradient={i === 0 ? single.gradient : undefined}
-                        onChange={v => {
-                          updateFill(i, { color: v });
-                          if (i === 0) update({ fill: v });
-                        }}
-                        onGradientChange={i === 0 ? updateGradient : undefined}
-                      />
+                    <div className="flex-1 relative">
+                      {i === 0 ? (() => {
+                        const fillBinding = single.tokenBindings?.fill;
+                        const boundToken = fillBinding ? (themes.find(t => t.id === activeThemeId)?.tokens.find(tok => tok.id === fillBinding) ?? null) : null;
+                        return (
+                          <>
+                            {boundToken ? (
+                              <TokenBoundIndicator
+                                tokenId={fillBinding ?? ''}
+                                tokenName={String(boundToken.name ?? '')}
+                                tokenValue={boundToken.value ?? ''}
+                                onUnbind={() => unbindToken(single.id, 'fill')}
+                              />
+                            ) : (
+                              <ColorPicker
+                                label={fills.length > 1 ? `填充 ${i + 1}` : '填充'}
+                                value={f.color || single.fill}
+                                gradient={single.gradient}
+                                onChange={v => { updateFill(i, { color: v }); if (i === 0) update({ fill: v }); }}
+                                onGradientChange={updateGradient}
+                              />
+                            )}
+                          </>
+                        );
+                      })() : (
+                        <ColorPicker
+                          label={fills.length > 1 ? `填充 ${i + 1}` : '填充'}
+                          value={f.color || single.fill}
+                          onChange={v => { updateFill(i, { color: v }); if (i === 0) update({ fill: v }); }}
+                        />
+                      )}
                     </div>
+                    {i === 0 && (
+                      <button
+                        onClick={() => setTokenPickerFor(tokenPickerFor === 'fill' ? null : 'fill')}
+                        className={`p-1 rounded transition-colors ${single.tokenBindings?.fill ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)] hover:text-[var(--accent)]'}`}
+                        title={single.tokenBindings?.fill ? '取消绑定' : '绑定 Token'}
+                        aria-label={single.tokenBindings?.fill ? '取消绑定' : '绑定 Token'}
+                      >
+                        <Link size={12} />
+                      </button>
+                    )}
+                    {tokenPickerFor === 'fill' && i === 0 && (
+                      <div className="absolute left-0 top-full mt-1 z-50">
+                        <TokenPicker
+                          property="fill"
+                          currentTokenId={single.tokenBindings?.fill}
+                          onSelect={id => { bindToken(single.id, 'fill', id); setTokenPickerFor(null); }}
+                          onClose={() => setTokenPickerFor(null)}
+                        />
+                      </div>
+                    )}
                     {fills.length > 1 && (
                       <button onClick={() => removeFill(i)} className="p-1 text-[var(--text-tertiary)] hover:text-[var(--danger)]" title="删除填充" aria-label="删除填充">
                         <Trash2 size={11} />
@@ -711,7 +1072,40 @@ export default function PropertiesPanel() {
             {/* Stroke */}
             {!isLine && single.type !== 'image' && (
               <Section title="描边">
-                <ColorPicker label="描边" value={single.stroke} onChange={v => update({ stroke: v })} />
+                {(() => {
+                  const strokeBinding = single.tokenBindings?.stroke;
+                  const boundToken = strokeBinding ? (themes.find(t => t.id === activeThemeId)?.tokens.find(tok => tok.id === strokeBinding) ?? null) : null;
+                  return (
+                    <div className="relative">
+                      {boundToken ? (
+                        <TokenBoundIndicator
+                          tokenId={strokeBinding ?? ''}
+                          tokenName={String(boundToken.name ?? '')}
+                          tokenValue={boundToken.value ?? ''}
+                          onUnbind={() => unbindToken(single.id, 'stroke')}
+                        />
+                      ) : (
+                        <ColorPicker label="描边" value={single.stroke} onChange={v => update({ stroke: v })} />
+                      )}
+                      <button
+                        onClick={() => setTokenPickerFor(tokenPickerFor === 'stroke' ? null : 'stroke')}
+                        className={`absolute right-0 top-0 p-1 rounded transition-colors ${strokeBinding ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)] hover:text-[var(--accent)]'}`}
+                        title={strokeBinding ? '取消绑定' : '绑定 Token'}
+                        aria-label={strokeBinding ? '取消绑定' : '绑定 Token'}
+                      >
+                        <Link size={12} />
+                      </button>
+                      {tokenPickerFor === 'stroke' && (
+                        <TokenPicker
+                          property="stroke"
+                          currentTokenId={strokeBinding}
+                          onSelect={id => { bindToken(single.id, 'stroke', id); setTokenPickerFor(null); }}
+                          onClose={() => setTokenPickerFor(null)}
+                        />
+                      )}
+                    </div>
+                  );
+                })()}
                 <NumInput label="描边宽度" value={single.strokeWidth} onChange={v => update({ strokeWidth: v })} suffix="px" min={0} max={20} />
               </Section>
             )}
@@ -880,6 +1274,73 @@ export default function PropertiesPanel() {
             {/* Prototype Interactions */}
             <InteractionEditor shape={single} />
 
+            {/* Mask Section */}
+            {single && (
+              <Section title="遮罩">
+                {/* Check if this shape is a mask source (some shape has maskSourceId pointing to it) */}
+                {shapes.some(s => s.maskSourceId === single.id) ? (
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-[var(--text-secondary)]">
+                      此图形正在遮罩 {shapes.filter(s => s.maskSourceId === single.id).length} 个图形
+                    </p>
+                    <button
+                      onClick={() => {
+                        pushHistory();
+                        // Clear maskSourceId from all shapes that reference this shape as mask
+                        shapes.forEach(s => {
+                          if (s.maskSourceId === single.id) {
+                            updateShape(s.id, { maskSourceId: undefined });
+                          }
+                        });
+                      }}
+                      className="w-full py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:bg-red-500/10 hover:text-red-400 transition-colors border border-[var(--border)]"
+                    >
+                      释放遮罩
+                    </button>
+                  </div>
+                ) : single.maskSourceId ? (
+                  /* Check if this shape is masked by another shape */
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-[var(--text-secondary)]">
+                      被遮罩: <span className="text-[var(--accent)]">{shapes.find(s => s.id === single.maskSourceId)?.name || '未知'}</span>
+                    </p>
+                    <button
+                      onClick={() => {
+                        pushHistory();
+                        updateShape(single.id, { maskSourceId: undefined });
+                      }}
+                      className="w-full py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:bg-red-500/10 hover:text-red-400 transition-colors border border-[var(--border)]"
+                    >
+                      释放遮罩
+                    </button>
+                  </div>
+                ) : canBeMaskSource(single) ? (
+                  /* Shape can be mask source but is neither masked nor a mask source */
+                  <div className="space-y-2">
+                    <p className="text-[10px] text-[var(--text-tertiary)]">将此图形设为遮罩源，其下方所有图形将被裁切</p>
+                    <button
+                      onClick={() => {
+                        pushHistory();
+                        // Find sibling shapes (same parentId) and set maskSourceId on all that come AFTER this shape
+                        const siblings = shapes.filter(s => s.parentId === single.parentId);
+                        const thisIndex = siblings.findIndex(s => s.id === single.id);
+                        siblings.forEach((s, idx) => {
+                          if (idx > thisIndex) {
+                            updateShape(s.id, { maskSourceId: single.id });
+                          }
+                        });
+                      }}
+                      className="w-full py-1.5 text-[11px] rounded bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors border border-[var(--accent)]/20"
+                    >
+                      设为遮罩
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-[var(--text-tertiary)] italic">此图形类型不支持作为遮罩</p>
+                )}
+              </Section>
+            )}
+
             {/* Export Section */}
             <Section title="导出">
               <div className="grid grid-cols-3 gap-1">
@@ -935,6 +1396,38 @@ export default function PropertiesPanel() {
               </div>
             </Section>
           </>
+        )}
+
+        {/* Boolean operations — shown when exactly 2 compatible shapes selected */}
+        {selected.length === 2 && (
+          <Section title="布尔运算">
+            {selected.every(s => canDoBoolean(s)) ? (
+              <div className="flex gap-1">
+                <IconBtn
+                  icon={<Combine size={13} />}
+                  label="合并 (Union)"
+                  onClick={() => applyBooleanOperation([selected[0].id, selected[1].id], 'union')}
+                />
+                <IconBtn
+                  icon={<Minus size={13} />}
+                  label="相减 (Subtract)"
+                  onClick={() => applyBooleanOperation([selected[0].id, selected[1].id], 'subtract')}
+                />
+                <IconBtn
+                  icon={<Layers size={13} />}
+                  label="相交 (Intersect)"
+                  onClick={() => applyBooleanOperation([selected[0].id, selected[1].id], 'intersect')}
+                />
+                <IconBtn
+                  icon={<Combine size={13} strokeWidth={3} />}
+                  label="排除 (Exclude)"
+                  onClick={() => applyBooleanOperation([selected[0].id, selected[1].id], 'exclude')}
+                />
+              </div>
+            ) : (
+              <p className="text-[10px] text-[var(--text-tertiary)] italic">布尔运算仅支持矩形 / 圆形 / 路径 图形</p>
+            )}
+          </Section>
         )}
 
         {/* Multi-select panel */}

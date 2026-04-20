@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useEditorStore } from '@/stores/useEditorStore';
-import { componentTemplates, getTemplatesByLibrary } from '@/lib/componentTemplates';
+import { getTemplatesByLibrary } from '@/lib/componentTemplates';
 import { ComponentTemplate } from '@/lib/types';
 import { Search, Image as ImageIcon } from 'lucide-react';
 import { fileToDataUrl, getImageDimensions } from '@/lib/hooks';
@@ -36,7 +36,7 @@ export default function ComponentLibrary() {
     return map;
   }, [filtered]);
 
-  const handleAddComponent = (template: ComponentTemplate) => {
+  const handleAddComponent = useCallback((template: ComponentTemplate) => {
     const groupId = uuid();
     const baseX = 200 + Math.random() * 400;
     const baseY = 200 + Math.random() * 200;
@@ -60,7 +60,7 @@ export default function ComponentLibrary() {
       setSelectedIds(newIds);
       setActiveTool('select');
     }
-  };
+  }, [addShape, setSelectedIds, setActiveTool]);
 
   const handleImportImage = async () => {
     const input = document.createElement('input');

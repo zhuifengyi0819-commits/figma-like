@@ -4,9 +4,10 @@ import { useState } from 'react';
 import ChatPanel from './ChatPanel';
 import PropertiesPanel from './PropertiesPanel';
 import CodeInspector from './CodeInspector';
-import { Sparkles, Settings2, Code } from 'lucide-react';
+import VariantPanel from './VariantPanel';
+import { Sparkles, Settings2, Code, Component } from 'lucide-react';
 
-type RightTab = 'chat' | 'properties' | 'code';
+type RightTab = 'chat' | 'properties' | 'code' | 'components';
 
 export default function RightPanel() {
   const [tab, setTab] = useState<RightTab>('chat');
@@ -48,6 +49,17 @@ export default function RightPanel() {
           <Code size={13} />
           代码
         </button>
+        <button
+          onClick={() => setTab('components')}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+            tab === 'components'
+              ? 'text-[var(--accent)] border-[var(--accent)]'
+              : 'text-[var(--text-tertiary)] border-transparent hover:text-[var(--text-secondary)]'
+          }`}
+        >
+          <Component size={13} />
+          组件
+        </button>
       </div>
 
       {/* Content */}
@@ -60,6 +72,9 @@ export default function RightPanel() {
         </div>
         <div className={tab === 'code' ? 'h-full' : 'hidden'}>
           <CodeInspector />
+        </div>
+        <div className={tab === 'components' ? 'h-full' : 'hidden'}>
+          <VariantPanel />
         </div>
       </div>
     </div>

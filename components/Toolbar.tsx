@@ -2,9 +2,9 @@
 
 import { useEditorStore } from '@/stores/useEditorStore';
 import { ToolType } from '@/lib/types';
-import { MousePointer2, Square, Circle, Type, Minus, Hand, Undo2, Redo2, Star, Triangle, ImagePlus, Frame, PenTool, ChevronDown, Ruler } from 'lucide-react';
+import { MousePointer2, Square, Circle, Type, Minus, Hand, Undo2, Redo2, Star, Triangle, ImagePlus, Frame, PenTool, ChevronDown, Ruler, Pipette } from 'lucide-react';
 import { fileToDataUrl, getImageDimensions } from '@/lib/hooks';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 
 const FRAME_PRESETS = [
   { name: 'iPhone 15 Pro', w: 393, h: 852 },
@@ -28,6 +28,7 @@ const FRAME_PRESETS = [
 const tools: { id: ToolType; icon: React.ReactNode; label: string; shortcut: string }[] = [
   { id: 'select', icon: <MousePointer2 size={18} />, label: '选择', shortcut: 'V' },
   { id: 'measure', icon: <Ruler size={18} />, label: '测量', shortcut: 'M' },
+  { id: 'eyedropper', icon: <Pipette size={18} />, label: '取色器', shortcut: 'I' },
   { id: 'hand', icon: <Hand size={18} />, label: '抓手', shortcut: 'H' },
   { id: 'frame', icon: <Frame size={18} />, label: '画框', shortcut: 'F' },
   { id: 'rect', icon: <Square size={18} />, label: '矩形', shortcut: 'R' },
@@ -52,7 +53,7 @@ export default function Toolbar() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showFramePresets]);
 
-  const insertPresetFrame = (preset: typeof FRAME_PRESETS[number]) => {
+  const insertPresetFrame = useCallback((preset: typeof FRAME_PRESETS[number]) => {
     const id = addShape({
       type: 'frame',
       x: 200 + Math.random() * 200,
@@ -73,7 +74,7 @@ export default function Toolbar() {
     setSelectedIds([id]);
     setActiveTool('select');
     setShowFramePresets(false);
-  };
+  }, [addShape, setSelectedIds, setActiveTool, setShowFramePresets]);
 
   const handleImageUpload = async () => {
     const input = document.createElement('input');
@@ -83,20 +84,32 @@ export default function Toolbar() {
     input.onchange = async (e) => {
       const files = (e.target as HTMLInputElement).files;
       if (!files) return;
-      for (const file of Array.from(files)) {
-        const dataUrl = await fileToDataUrl(file);
-        const dims = await getImageDimensions(dataUrl);
-        let w = dims.width; let h = dims.height;
-        if (w > 600) { h = h * (600 / w); w = 600; }
-        if (h > 400) { w = w * (400 / h); h = 400; }
+
+      // 并行读取所有文件尺寸和信息
+      const fileInfos = await Promise.all(
+        Array.from(files).map(async (file) => {
+          const dataUrl = await fileToDataUrl(file);
+          const dims = await getImageDimensions(dataUrl);
+          let w = dims.width, h = dims.height;
+          if (w > 600) { h = h * (600 / w); w = 600; }
+          if (h > 400) { w = w * (400 / h); h = 400; }
+          return { dataUrl, w, h, name: file.name };
+        }),
+      );
+
+      // 批量添加所有图片（串行因为 addShape 有副作用）
+      const newIds: string[] = [];
+      for (let i = 0; i < fileInfos.length; i++) {
+        const { dataUrl, w, h, name } = fileInfos[i];
         const id = addShape({
-          type: 'image', x: 200 + Math.random() * 300, y: 200 + Math.random() * 200,
+          type: 'image', x: 200 + i * 30, y: 200 + i * 30,
           width: w, height: h, src: dataUrl,
           fill: 'transparent', stroke: 'transparent', strokeWidth: 0,
-          opacity: 1, rotation: 0, visible: true, locked: false, name: file.name,
+          opacity: 1, rotation: 0, visible: true, locked: false, name,
         });
-        setSelectedIds([id]);
+        newIds.push(id);
       }
+      setSelectedIds(newIds);
       setActiveTool('select');
     };
     input.click();

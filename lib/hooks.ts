@@ -1,26 +1,50 @@
 import { useEffect, useRef, useState } from 'react';
 
 export function useImage(src: string | undefined): [HTMLImageElement | undefined, 'loading' | 'loaded' | 'error'] {
-  const [image, setImage] = useState<HTMLImageElement>();
+  const [image, setImage] = useState<HTMLImageElement | undefined>(undefined);
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
-  const prevSrc = useRef<string>(undefined);
+  const srcRef = useRef<string | undefined>(undefined);
+  const imgRef = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
-    if (!src) { setImage(undefined); setStatus('loading'); return; }
-    if (src === prevSrc.current && image) return;
-    prevSrc.current = src;
+    if (!src) {
+      srcRef.current = src;
+      return;
+    }
+
+    // Skip if src unchanged and we already have an image
+    if (src === srcRef.current && imgRef.current) return;
+    srcRef.current = src;
+
+    // Abort previous image if any
+    if (imgRef.current) {
+      imgRef.current.onload = null;
+      imgRef.current.onerror = null;
+    }
 
     const img = new window.Image();
+    imgRef.current = img;
     img.crossOrigin = 'anonymous';
 
-    img.onload = () => { setImage(img); setStatus('loaded'); };
-    img.onerror = () => { setStatus('error'); };
+    img.onload = () => {
+      setImage(img);
+      setStatus('loaded');
+    };
+    img.onerror = () => {
+      setStatus('error');
+      imgRef.current = null;
+    };
 
     img.src = src;
-    setStatus('loading');
+    // Intentionally: do NOT setStatus('loading') here — only async callbacks update state
 
-    return () => { img.onload = null; img.onerror = null; };
-  }, [src]);// eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      img.onload = null;
+      img.onerror = null;
+    };
+    // image is intentionally omitted: we never read it in this effect
+     
+  }, [src]);
 
   return [image, status];
 }

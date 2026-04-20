@@ -1186,7 +1186,7 @@ export default function Canvas({ width, height }: CanvasProps) {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-      const img = new Image();
+      const img = new Image(1, 1);
       img.onload = () => {
         canvas.width = img.width;
         canvas.height = img.height;

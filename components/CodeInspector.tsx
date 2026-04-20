@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useEditorStore } from '@/stores/useEditorStore';
 import { shapeToCss, shapeToReact, shapeToTailwind, shapeToHtml, shapesToFullReact, shapesToFullHtml } from '@/lib/codeGen';
-import { Code, Copy, Check, FileCode, Download } from 'lucide-react';
+import { Code, Copy, Check, Download } from 'lucide-react';
 
 type CodeMode = 'css' | 'react' | 'tailwind' | 'html';
 

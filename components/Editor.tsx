@@ -9,9 +9,12 @@ import StatusBar from './StatusBar';
 import Toolbar from './Toolbar';
 import HelpModal from './HelpModal';
 import ContextMenu from './ContextMenu';
+import ArrayModal from './ArrayModal';
 import PageTabs from './PageTabs';
 import PrototypePlayer from './PrototypePlayer';
 import Rulers, { RULER_SIZE } from './Rulers';
+import DevicePreviewModal from './DevicePreviewModal';
+import VersionHistoryPanel from './VersionHistoryPanel';
 import { useEditorStore } from '@/stores/useEditorStore';
 
 const Canvas = dynamic(() => import('./Canvas'), { ssr: false });
@@ -19,7 +22,8 @@ const Canvas = dynamic(() => import('./Canvas'), { ssr: false });
 export default function Editor() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
-  const { prototypeMode, setPrototypeMode } = useEditorStore();
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const { prototypeMode, setPrototypeMode, arrayModalOpen, setArrayModalOpen, selectedIds, showDevicePreview, setShowDevicePreview } = useEditorStore();
 
   useEffect(() => {
     const updateSize = () => {
@@ -35,11 +39,43 @@ export default function Editor() {
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && prototypeMode) { setPrototypeMode(false); }
+      if (e.key === 'Escape') {
+        if (arrayModalOpen) { setArrayModalOpen(false); return; }
+        if (prototypeMode) { setPrototypeMode(false); }
+      }
+    };
+    // '/' key focuses AI chat input
+    const handleSlash = (e: KeyboardEvent) => {
+      if (e.key === '/' && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('focus-chat-input'));
+      }
+    };
+    // Cmd+Shift+K opens device preview
+    const handleDevicePreview = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowDevicePreview(true);
+      }
     };
     window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
-  }, [prototypeMode, setPrototypeMode]);
+    window.addEventListener('keydown', handleSlash);
+    window.addEventListener('keydown', handleDevicePreview);
+    // Cmd+Shift+S opens version history
+    const handleVersionHistory = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        setShowVersionHistory(true);
+      }
+    };
+    window.addEventListener('keydown', handleVersionHistory);
+    return () => {
+      window.removeEventListener('keydown', handleEsc);
+      window.removeEventListener('keydown', handleSlash);
+      window.removeEventListener('keydown', handleDevicePreview);
+      window.removeEventListener('keydown', handleVersionHistory);
+    };
+  }, [prototypeMode, setPrototypeMode, arrayModalOpen, setArrayModalOpen, setShowDevicePreview, setShowVersionHistory]);
 
   if (prototypeMode) return <PrototypePlayer />;
 
@@ -65,6 +101,18 @@ export default function Editor() {
       <StatusBar />
       <HelpModal />
       <ContextMenu />
+      {arrayModalOpen && (
+        <ArrayModal
+          selectedIds={selectedIds}
+          onClose={() => setArrayModalOpen(false)}
+        />
+      )}
+      {showDevicePreview && (
+        <DevicePreviewModal onClose={() => setShowDevicePreview(false)} />
+      )}
+      {showVersionHistory && (
+        <VersionHistoryPanel onClose={() => setShowVersionHistory(false)} />
+      )}
     </div>
   );
 }
