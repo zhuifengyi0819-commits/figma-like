@@ -82,14 +82,44 @@ export interface VersionSnapshot {
 }
 
 // Prototype interaction attached to a shape
+export type TriggerType =
+  | 'click' | 'hover' | 'drag' | 'mouseDown' | 'mouseUp'
+  | 'mouseEnter' | 'mouseLeave' | 'keyDown'
+  | 'afterDelay' | 'whileDown' | 'onLoad' | 'none';
+
+export type ActionType =
+  | 'navigateTo' | 'back' | 'openUrl' | 'swap' | 'scrollTo' | 'overlay';
+
+export type EasingType =
+  | 'ease' | 'easeIn' | 'easeOut' | 'easeInOut'
+  | 'linear'
+  | 'spring' | 'bounce' | 'elastic';
+
+export interface OverlayConfig {
+  positioning: 'center' | 'top' | 'bottom' | 'left' | 'right' | 'custom';
+  offsetX?: number;
+  offsetY?: number;
+  closeOnClick?: boolean;   // 点击背景关闭
+  closeOnEsc?: boolean;     // ESC 关闭
+  backgroundColor?: string; // backdrop 颜色
+}
+
 export interface Interaction {
-  trigger: 'click' | 'hover' | 'drag';
-  action: 'navigateTo' | 'back' | 'openUrl' | 'swap' | 'scrollTo';
+  trigger: TriggerType;
+  action: ActionType;
   targetFrameId?: string;
   url?: string;
-  transition?: 'auto' | 'instant' | 'dissolve' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown' | 'scale';
+  transition?: 'auto' | TransitionType;
+  easing?: EasingType;
   duration?: number;
+  delay?: number;         // afterDelay 触发器的延迟(ms)
+  overlay?: OverlayConfig;
 }
+
+export type TransitionType =
+  | 'instant' | 'dissolve'
+  | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown'
+  | 'scale' | 'slideLeftRight' | 'slideUpDown';
 
 // Token bindings (key = property name, value = token id) — resolved at render time
 export interface TokenBindings {
@@ -337,3 +367,44 @@ export const PRESET_COLORS = [
   '#FF4D4F', '#FF7A45', '#FFA940', '#FFEC3D', '#73D13D', '#36CFC9', '#4096FF', '#597EF7', '#9254DE', '#F759AB',
   '#CF1322', '#D4380D', '#D46B08', '#D4B106', '#389E0D', '#08979C', '#0958D9', '#1D39C4', '#531DAB', '#C41D7F',
 ];
+
+// ==================== Prototype System ====================
+
+export interface PrototypeFlow {
+  id: string;
+  name: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  createdAt: number;
+}
+
+export interface FlowNode {
+  frameId: string;
+  x: number;      // 在 flow 画布上的位置
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface FlowEdge {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  trigger: TriggerType;
+  label?: string;
+}
+
+export interface Variable {
+  id: string;
+  name: string;
+  type: 'string' | 'number' | 'boolean';
+  defaultValue: string | number | boolean;
+}
+
+export interface ActiveOverlay {
+  id: string;
+  targetFrameId: string;
+  triggerElementId: string;
+  triggerRect: { x: number; y: number; width: number; height: number };
+  config: OverlayConfig;
+}
