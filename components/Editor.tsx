@@ -18,6 +18,7 @@ import Rulers, { RULER_SIZE } from './Rulers';
 import DevicePreviewModal from './DevicePreviewModal';
 import VersionHistoryPanel from './VersionHistoryPanel';
 import { useEditorStore } from '@/stores/useEditorStore';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Shape, FlowEdge as FlowEdgeType } from '@/lib/types';
 
 const Canvas = dynamic(() => import('./Canvas'), { ssr: false });
@@ -81,6 +82,9 @@ export default function Editor() {
       window.removeEventListener('keydown', handleVersionHistory);
     };
   }, [prototypeMode, setPrototypeMode, arrayModalOpen, setArrayModalOpen, setShowDevicePreview, setShowVersionHistory]);
+
+  // Initialize keyboard shortcuts (global, singleton)
+  useKeyboardShortcuts();
 
   // Compute frames and edges for prototype overlay from store state
   const { frames, edges } = useMemo(() => {
