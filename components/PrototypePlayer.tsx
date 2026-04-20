@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape, Interaction, TriggerType, ActiveOverlay, OverlayConfig } from '@/lib/types';
+import { Shape, Interaction, TriggerType, ActiveOverlay, OverlayConfig, ComponentStateType } from '@/lib/types';
 import { isLayoutContainer, containerClipOverflow } from '@/lib/measurement';
 import { computeSmartTransition } from '@/lib/smartAnimate';
 import { getEasingCss } from '@/lib/easing';
@@ -90,6 +90,22 @@ function useTriggerHandlers({ shape, allShapes, shapeRef, onNavigate, onOverlay 
       } else if (int.action === 'setOverlay' && int.targetFrameId && int.overlay) {
         const rect = shapeRef.current?.getBoundingClientRect() ?? null;
         onOverlay(int.targetFrameId, int.overlay, shape.id, rect);
+      } else if (int.action === 'setVariable' && int.variableId && int.variableValue !== undefined) {
+        // Set variable value in store
+        const store = useEditorStore.getState();
+        store.setVariableValue(int.variableId, int.variableValue);
+        // Optionally navigate after setting
+        if (int.targetFrameId) {
+          onNavigate(int.targetFrameId, int.transition, int.duration, int.easing, shape.id);
+        }
+      } else if (int.action === 'stateChange' && int.targetState) {
+        // Change component state
+        const store = useEditorStore.getState();
+        store.setShapeState(shape.id, int.targetState as ComponentStateType);
+        // Optionally navigate after state change
+        if (int.targetFrameId) {
+          onNavigate(int.targetFrameId, int.transition, int.duration, int.easing, shape.id);
+        }
       }
     }
   }, [interactions, onNavigate, onOverlay, shape.id, shapeRef]);
