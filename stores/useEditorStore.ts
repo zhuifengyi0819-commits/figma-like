@@ -133,8 +133,8 @@ interface EditorState {
   enterComponentEditing: (componentId: string) => void;
   exitComponentEditing: () => void;
 
-  prototypeMode: boolean;
-  setPrototypeMode: (on: boolean) => void;
+  prototypeMode: 'EDIT' | 'FLOW' | 'PREVIEW';
+  setPrototypeMode: (mode: 'EDIT' | 'FLOW' | 'PREVIEW') => void;
   addInteraction: (shapeId: string, interaction: Interaction) => void;
   removeInteraction: (shapeId: string, idx: number) => void;
   updateInteraction: (shapeId: string, idx: number, patch: Partial<Interaction>) => void;
@@ -338,7 +338,7 @@ export const useEditorStore = create<EditorState>()(
       showDevicePreview: false,
       components: [],
       editingComponentId: null,
-      prototypeMode: false,
+      prototypeMode: 'EDIT' as const,
       themes: [{ id: defaultThemeId, name: 'Default', tokens: [...PRESET_TOKENS] }],
       activeThemeId: defaultThemeId,
 
@@ -1165,7 +1165,7 @@ export const useEditorStore = create<EditorState>()(
       },
 
       // === Prototype ===
-      setPrototypeMode: (on) => set({ prototypeMode: on, selectedIds: [] }),
+      setPrototypeMode: (mode) => set({ prototypeMode: mode, selectedIds: [] }),
 
       addInteraction: (shapeId, interaction) => {
         set(state => {

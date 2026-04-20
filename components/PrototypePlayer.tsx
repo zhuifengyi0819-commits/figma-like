@@ -243,7 +243,7 @@ export default function PrototypePlayer() {
         } else if (canGoBack) {
           goBack();
         } else {
-          setPrototypeMode(false);
+          setPrototypeMode('EDIT');
         }
       }
     };
@@ -377,7 +377,7 @@ export default function PrototypePlayer() {
             ))}
           </select>
           <button
-            onClick={() => setPrototypeMode(false)}
+            onClick={() => setPrototypeMode('EDIT')}
             className="p-1.5 rounded text-[#999] hover:text-white transition-colors"
             title="退出预览"
           >

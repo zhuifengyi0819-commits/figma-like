@@ -75,7 +75,7 @@ export default function Header() {
       <div className="flex items-center gap-1">
         {/* Prototype play */}
         <button
-          onClick={() => setPrototypeMode(true)}
+          onClick={() => setPrototypeMode('FLOW')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 transition-opacity"
           title="预览原型"
         >
