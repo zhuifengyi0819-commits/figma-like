@@ -186,7 +186,7 @@ export class HistoryManager {
     };
   }
 
-  /** Command: reorder node within parent */
+  /** Command: reorder node */
   reorderCommand(
     nodeId: string,
     fromIndex: number,
@@ -201,6 +201,39 @@ export class HistoryManager {
       },
       undo: () => {
         this.sceneGraph.reorderNode(nodeId, fromIndex);
+      },
+    };
+  }
+
+  /** Command: duplicate nodes (Alt+Drag) */
+  duplicateCommand(
+    sourceIds: string[],
+    newIdMap: Map<string, string>,
+    parentId: string,
+    name = 'Duplicate'
+  ): Command {
+    // Snapshot source nodes
+    const sourceSnapshots = new Map<string, Record<string, unknown>>();
+    for (const id of sourceIds) {
+      const node = this.sceneGraph.getNode(id);
+      if (node) sourceSnapshots.set(id, { ...node } as Record<string, unknown>);
+    }
+
+    return {
+      id: `duplicate-${Date.now()}`,
+      name,
+      execute: () => {
+        for (const [srcId, newId] of newIdMap) {
+          const src = sourceSnapshots.get(srcId);
+          if (!src) continue;
+          const dup = { ...src, id: newId } as any;
+          this.sceneGraph.addNode(dup, parentId);
+        }
+      },
+      undo: () => {
+        for (const newId of newIdMap.values()) {
+          this.sceneGraph.removeNode(newId);
+        }
       },
     };
   }
