@@ -86,7 +86,7 @@ function useTriggerHandlers({ shape, allShapes, onNavigate, onOverlay }: Trigger
         window.open(int.url, '_blank');
       } else if (int.action === 'back') {
         // handled at player level
-      } else if (int.action === 'overlay' && int.targetFrameId && int.overlay) {
+      } else if (int.action === 'setOverlay' && int.targetFrameId && int.overlay) {
         onOverlay(int.targetFrameId, int.overlay, shape.id);
       }
     }
@@ -397,7 +397,7 @@ export default function PrototypePlayer() {
             backgroundColor: currentFrame?.fill || '#1A1A1D',
             borderRadius: currentFrame?.cornerRadius || 0,
             overflow: currentFrame && containerClipOverflow(currentFrame) ? 'hidden' : undefined,
-            transition: transitioning ? `opacity 0.3s ${getEasingCss()}` : undefined,
+            transition: transitioning ? `opacity 0.3s ${getEasingCss('easeOut')}` : undefined,
           }}
         >
           {visibleShapes.map(shape => (

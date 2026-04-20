@@ -83,25 +83,31 @@ export interface VersionSnapshot {
 
 // Prototype interaction attached to a shape
 export type TriggerType =
-  | 'click' | 'hover' | 'drag' | 'mouseDown' | 'mouseUp'
-  | 'mouseEnter' | 'mouseLeave' | 'keyDown'
+  | 'click' | 'hover' | 'drag' | 'whileDragging'
+  | 'mouseDown' | 'mouseUp' | 'mouseEnter' | 'mouseLeave'
+  | 'onFocus' | 'onBlur' | 'keyDown'
   | 'afterDelay' | 'whileDown' | 'onLoad' | 'none';
 
 export type ActionType =
-  | 'navigateTo' | 'back' | 'openUrl' | 'swap' | 'scrollTo' | 'overlay';
+  | 'navigateTo' | 'back' | 'openUrl' | 'swap' | 'scrollTo'
+  | 'setOverlay' | 'closeOverlay'
+  | 'stateChange' | 'none';
 
 export type EasingType =
-  | 'ease' | 'easeIn' | 'easeOut' | 'easeInOut'
-  | 'linear'
+  | 'ease' | 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'
+  | 'easeInQuad' | 'easeOutQuad' | 'easeInOutQuad'
+  | 'easeInCubic' | 'easeOutCubic' | 'easeInOutCubic'
+  | 'easeInQuart' | 'easeOutQuart' | 'easeInOutQuart'
+  | 'easeInExpo' | 'easeOutExpo' | 'easeInOutExpo'
+  | 'easeInBack' | 'easeOutBack' | 'easeInOutBack'
   | 'spring' | 'bounce' | 'elastic';
 
 export interface OverlayConfig {
-  positioning: 'center' | 'top' | 'bottom' | 'left' | 'right' | 'custom';
-  offsetX?: number;
-  offsetY?: number;
-  closeOnClick?: boolean;   // 点击背景关闭
-  closeOnEsc?: boolean;     // ESC 关闭
-  backgroundColor?: string; // backdrop 颜色
+  anchor: 'TOP_LEFT' | 'TOP_CENTER' | 'TOP_RIGHT' | 'CENTER_LEFT' | 'CENTER' | 'CENTER_RIGHT' | 'BOTTOM_LEFT' | 'BOTTOM_CENTER' | 'BOTTOM_RIGHT';
+  targetFrameId: string;
+  modal?: boolean;           // 点击背景关闭
+  embedWithin?: boolean;     // 嵌入父级
+  backdropColor?: string;    // backdrop 颜色
 }
 
 export interface Interaction {
@@ -119,7 +125,8 @@ export interface Interaction {
 export type TransitionType =
   | 'instant' | 'dissolve'
   | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown'
-  | 'scale' | 'slideLeftRight' | 'slideUpDown';
+  | 'scale' | 'slideLeftRight' | 'slideUpDown'
+  | 'smartAnimate';
 
 // Token bindings (key = property name, value = token id) — resolved at render time
 export interface TokenBindings {

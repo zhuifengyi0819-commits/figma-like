@@ -2,8 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Shape } from '@/lib/types';
-import { OverlayConfig } from '@/lib/types';
+import { Shape, OverlayConfig } from '@/lib/types';
 import { X } from 'lucide-react';
 import Backdrop from './Backdrop';
 import { getEasingCss } from '@/lib/easing';
@@ -19,6 +18,19 @@ interface OverlayPanelProps {
 
 type AnimState = 'closed' | 'opening' | 'open' | 'closing';
 
+// Anchor-based positioning: map anchor to CSS position
+const ANCHOR_CSS: Record<OverlayConfig['anchor'], { top?: string | number; bottom?: string | number; left?: string | number; right?: string | number; transform?: string }> = {
+  TOP_LEFT: { top: 0, left: 0 },
+  TOP_CENTER: { top: 0, left: '50%', transform: 'translateX(-50%)' },
+  TOP_RIGHT: { top: 0, right: 0 },
+  CENTER_LEFT: { top: '50%', left: 0, transform: 'translateY(-50%)' },
+  CENTER: { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' },
+  CENTER_RIGHT: { top: '50%', right: 0, transform: 'translateY(-50%)' },
+  BOTTOM_LEFT: { bottom: 0, left: 0 },
+  BOTTOM_CENTER: { bottom: 0, left: '50%', transform: 'translateX(-50%)' },
+  BOTTOM_RIGHT: { bottom: 0, right: 0 },
+};
+
 export default function OverlayPanel({
   targetFrame,
   allShapes,
@@ -31,9 +43,7 @@ export default function OverlayPanel({
   const [animState, setAnimState] = useState<AnimState>('closed');
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     if (visible) {
@@ -47,118 +57,66 @@ export default function OverlayPanel({
     }
   }, [visible]);
 
-  const handleClose = useCallback(() => {
-    onClose();
-  }, [onClose]);
+  const handleClose = useCallback(() => { onClose(); }, [onClose]);
 
   const handleBackdropClick = useCallback(() => {
-    if (config.closeOnClick !== false) {
-      handleClose();
-    }
-  }, [config.closeOnClick, handleClose]);
+    if (config.modal !== false) { handleClose(); }
+  }, [config.modal, handleClose]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Escape' && config.closeOnEsc !== false) {
-      handleClose();
-    }
-  }, [config.closeOnEsc, handleClose]);
+    if (e.key === 'Escape') { handleClose(); }
+  }, [handleClose]);
 
   if (!mounted || animState === 'closed') return null;
 
   const frameWidth = targetFrame.width || 400;
   const frameHeight = targetFrame.height || 300;
-
-  // Get child shapes of the target frame
   const childShapes = allShapes.filter(s => s.parentId === targetFrame.id);
+  const anchor = config.anchor || 'CENTER';
+  const anchorStyle = ANCHOR_CSS[anchor];
 
-  // Compute position based on config.positioning
   const getPosition = (): React.CSSProperties => {
     const base: React.CSSProperties = {
       position: 'fixed',
       zIndex: 1000,
       width: frameWidth,
       height: frameHeight,
+      opacity: animState === 'opening' ? 0 : 1,
       transition: `transform 300ms ${getEasingCss('easeOut')}, opacity 300ms ${getEasingCss('easeOut')}`,
     };
 
-    const positioning = config.positioning || 'center';
+    // Apply anchor position
+    if (anchorStyle.top !== undefined) base.top = anchorStyle.top;
+    if (anchorStyle.bottom !== undefined) base.bottom = anchorStyle.bottom;
+    if (anchorStyle.left !== undefined) base.left = anchorStyle.left;
+    if (anchorStyle.right !== undefined) base.right = anchorStyle.right;
+    if (anchorStyle.transform !== undefined) {
+      base.transform = (animState === 'opening' && triggerRect)
+        ? `${anchorStyle.transform} scale(0.8)`
+        : anchorStyle.transform;
+    }
 
+    // FLIP: expand from trigger origin on first open
     if (triggerRect && animState === 'opening') {
-      // FLIP animation: start from trigger element's rect
-      const startX = triggerRect.x + triggerRect.width / 2 - frameWidth / 2;
-      const startY = triggerRect.y + triggerRect.height / 2 - frameHeight / 2;
-      base.transform = `translate(${startX - (window.innerWidth / 2 - frameWidth / 2)}px, ${startY - (window.innerHeight / 2 - frameHeight / 2)}px) scale(0.8)`;
-      base.opacity = 0;
+      const cx = triggerRect.x + triggerRect.width / 2;
+      const cy = triggerRect.y + triggerRect.height / 2;
+      const anchorCx = (() => {
+        if (anchorStyle.left === '50%') return window.innerWidth / 2;
+        if (anchorStyle.right !== undefined) return window.innerWidth - (typeof anchorStyle.right === 'number' ? anchorStyle.right : 0);
+        return typeof anchorStyle.left === 'number' ? anchorStyle.left + frameWidth / 2 : frameWidth / 2;
+      })();
+      const anchorCy = (() => {
+        if (anchorStyle.top === '50%') return window.innerHeight / 2;
+        if (anchorStyle.bottom !== undefined) return window.innerHeight - (typeof anchorStyle.bottom === 'number' ? anchorStyle.bottom : 0);
+        return typeof anchorStyle.top === 'number' ? anchorStyle.top + frameHeight / 2 : frameHeight / 2;
+      })();
+      const scaleX = Math.min(triggerRect.width / frameWidth, 1);
+      const scaleY = Math.min(triggerRect.height / frameHeight, 1);
+      base.transform = `translate(${cx - anchorCx}px, ${cy - anchorCy}px) scale(${scaleX}, ${scaleY})`;
+      base.transformOrigin = 'center center';
     }
 
-    switch (positioning) {
-      case 'center':
-        return {
-          ...base,
-          top: '50%',
-          left: '50%',
-          transform: animState === 'opening'
-            ? `${base.transform || ''} translate(-50%, -50%)`.trim()
-            : 'translate(-50%, -50%)',
-          opacity: animState === 'opening' ? 0 : 1,
-        };
-      case 'top':
-        return {
-          ...base,
-          top: 0,
-          left: '50%',
-          transform: animState === 'opening'
-            ? `${base.transform || ''} translateX(-50%)`.trim()
-            : 'translateX(-50%)',
-          opacity: animState === 'opening' ? 0 : 1,
-        };
-      case 'bottom':
-        return {
-          ...base,
-          bottom: 0,
-          left: '50%',
-          transform: animState === 'opening'
-            ? `${base.transform || ''} translateX(-50%)`.trim()
-            : 'translateX(-50%)',
-          opacity: animState === 'opening' ? 0 : 1,
-        };
-      case 'left':
-        return {
-          ...base,
-          left: 0,
-          top: '50%',
-          transform: animState === 'opening'
-            ? `${base.transform || ''} translateY(-50%)`.trim()
-            : 'translateY(-50%)',
-          opacity: animState === 'opening' ? 0 : 1,
-        };
-      case 'right':
-        return {
-          ...base,
-          right: 0,
-          top: '50%',
-          transform: animState === 'opening'
-            ? `${base.transform || ''} translateY(-50%)`.trim()
-            : 'translateY(-50%)',
-          opacity: animState === 'opening' ? 0 : 1,
-        };
-      case 'custom':
-        return {
-          ...base,
-          top: config.offsetY ?? '50%',
-          left: config.offsetX ?? '50%',
-          transform: 'translate(-50%, -50%)',
-          opacity: animState === 'opening' ? 0 : 1,
-        };
-      default:
-        return {
-          ...base,
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          opacity: 1,
-        };
-    }
+    return base;
   };
 
   const resolveShapeStyle = (shape: Shape): React.CSSProperties => {
@@ -197,7 +155,7 @@ export default function OverlayPanel({
     <>
       <Backdrop
         visible={visible}
-        color={config.backgroundColor}
+        color={config.backdropColor}
         onClick={handleBackdropClick}
         onKeyDown={handleKeyDown}
       />
@@ -232,7 +190,6 @@ export default function OverlayPanel({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={shape.src} alt={shape.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               )}
-              {/* Nested children */}
               {allShapes.filter(s => s.parentId === shape.id).map(child => (
                 <div key={child.id} style={resolveShapeStyle({ ...child, x: child.x - shape.x, y: child.y - shape.y })}>
                   {child.type === 'text' && child.text}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape, Shadow, Gradient, Fill, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, TokenBindings, ConstraintAxis } from '@/lib/types';
+import { Shape, Shadow, Gradient, Fill, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, TokenBindings, ConstraintAxis, OverlayConfig } from '@/lib/types';
 import {
   ArrowUp, ArrowDown, Trash2, Copy, Move, Plus,
   AlignLeft, AlignCenterHorizontal, AlignRight,
@@ -156,8 +156,83 @@ function InteractionEditor({ shape }: { shape: Shape }) {
       action: 'navigateTo',
       transition: 'dissolve',
       duration: 300,
+      easing: 'easeInOut',
     });
   };
+
+  const TRIGGERS: { value: Interaction['trigger']; label: string }[] = [
+    { value: 'click', label: '点击 (Click)' },
+    { value: 'hover', label: '悬停 (Hover)' },
+    { value: 'drag', label: '拖拽 (Drag)' },
+    { value: 'whileDragging', label: '拖拽中 (While Dragging)' },
+    { value: 'afterDelay', label: '延迟后 (After Delay)' },
+    { value: 'mouseDown', label: '鼠标按下 (Mouse Down)' },
+    { value: 'mouseUp', label: '鼠标释放 (Mouse Up)' },
+    { value: 'mouseEnter', label: '鼠标进入 (Mouse Enter)' },
+    { value: 'mouseLeave', label: '鼠标离开 (Mouse Leave)' },
+    { value: 'onFocus', label: '获得焦点 (On Focus)' },
+    { value: 'onBlur', label: '失去焦点 (On Blur)' },
+  ];
+
+  const ACTIONS: { value: Interaction['action']; label: string }[] = [
+    { value: 'navigateTo', label: '跳转画框' },
+    { value: 'back', label: '返回' },
+    { value: 'openUrl', label: '打开链接' },
+    { value: 'scrollTo', label: '滚动到' },
+    { value: 'setOverlay', label: '打开 Overlay' },
+    { value: 'closeOverlay', label: '关闭 Overlay' },
+    { value: 'swap', label: '交换画框' },
+    { value: 'stateChange', label: '切换状态' },
+    { value: 'none', label: '无' },
+  ];
+
+  const TRANSITIONS: { value: Interaction['transition']; label: string }[] = [
+    { value: 'instant', label: '立即' },
+    { value: 'dissolve', label: '渐变' },
+    { value: 'slideLeft', label: '左滑' },
+    { value: 'slideRight', label: '右滑' },
+    { value: 'slideUp', label: '上滑' },
+    { value: 'slideDown', label: '下滑' },
+    { value: 'scale', label: '缩放' },
+    { value: 'smartAnimate', label: '智能动画' },
+  ];
+
+  const EASINGS: { value: Interaction['easing']; label: string }[] = [
+    { value: 'ease', label: '缓动 (Ease)' },
+    { value: 'linear', label: '线性 (Linear)' },
+    { value: 'easeIn', label: '缓入 (Ease In)' },
+    { value: 'easeOut', label: '缓出 (Ease Out)' },
+    { value: 'easeInOut', label: '缓入缓出 (Ease In Out)' },
+    { value: 'easeInQuad', label: '二次方缓入' },
+    { value: 'easeOutQuad', label: '二次方缓出' },
+    { value: 'easeInOutQuad', label: '二次方缓入缓出' },
+    { value: 'easeInCubic', label: '三次方缓入' },
+    { value: 'easeOutCubic', label: '三次方缓出' },
+    { value: 'easeInOutCubic', label: '三次方缓入缓出' },
+    { value: 'easeInQuart', label: '四次方缓入' },
+    { value: 'easeOutQuart', label: '四次方缓出' },
+    { value: 'easeInOutQuart', label: '四次方缓入缓出' },
+    { value: 'easeInExpo', label: '指数缓入' },
+    { value: 'easeOutExpo', label: '指数缓出' },
+    { value: 'easeInOutExpo', label: '指数缓入缓出' },
+    { value: 'easeInBack', label: '回弹缓入' },
+    { value: 'easeOutBack', label: '回弹缓出' },
+    { value: 'easeInOutBack', label: '回弹缓入缓出' },
+    { value: 'spring', label: '弹簧' },
+    { value: 'bounce', label: '弹跳' },
+  ];
+
+  const OVERLAY_ANCHORS: { value: OverlayConfig['anchor']; label: string }[] = [
+    { value: 'TOP_LEFT', label: '左上' },
+    { value: 'TOP_CENTER', label: '顶部居中' },
+    { value: 'TOP_RIGHT', label: '右上' },
+    { value: 'CENTER_LEFT', label: '左侧居中' },
+    { value: 'CENTER', label: '居中' },
+    { value: 'CENTER_RIGHT', label: '右侧居中' },
+    { value: 'BOTTOM_LEFT', label: '左下' },
+    { value: 'BOTTOM_CENTER', label: '底部居中' },
+    { value: 'BOTTOM_RIGHT', label: '右下' },
+  ];
 
   return (
     <Section title="交互">
@@ -171,36 +246,42 @@ function InteractionEditor({ shape }: { shape: Shape }) {
               <Trash2 size={10} />
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            <div>
-              <label className="text-[9px] text-[var(--text-tertiary)]">触发</label>
-              <select
-                value={int.trigger}
-                onChange={e => updateInteraction(shape.id, idx, { trigger: e.target.value as Interaction['trigger'] })}
-                className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
-                title="触发方式"
-              >
-                <option value="click">点击</option>
-                <option value="hover">悬停</option>
-                <option value="drag">拖拽</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[9px] text-[var(--text-tertiary)]">动作</label>
-              <select
-                value={int.action}
-                onChange={e => updateInteraction(shape.id, idx, { action: e.target.value as Interaction['action'] })}
-                className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
-                title="动作类型"
-              >
-                <option value="navigateTo">跳转画框</option>
-                <option value="back">返回</option>
-                <option value="openUrl">打开链接</option>
-                <option value="scrollTo">滚动到</option>
-                <option value="swap">交换画框</option>
-              </select>
-            </div>
+          {/* Trigger */}
+          <div>
+            <label className="text-[9px] text-[var(--text-tertiary)]">触发</label>
+            <select
+              value={int.trigger}
+              onChange={e => updateInteraction(shape.id, idx, { trigger: e.target.value as Interaction['trigger'] })}
+              className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
+              title="触发方式"
+            >
+              {TRIGGERS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
           </div>
+          {/* Delay for afterDelay trigger */}
+          {int.trigger === 'afterDelay' && (
+            <div>
+              <label className="text-[9px] text-[var(--text-tertiary)]">延迟 (ms)</label>
+              <input
+                type="number" value={int.delay || 500} min={0} max={10000} step={100}
+                onChange={e => updateInteraction(shape.id, idx, { delay: parseInt(e.target.value) || 0 })}
+                className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)] font-mono outline-none"
+              />
+            </div>
+          )}
+          {/* Action */}
+          <div>
+            <label className="text-[9px] text-[var(--text-tertiary)]">动作</label>
+            <select
+              value={int.action}
+              onChange={e => updateInteraction(shape.id, idx, { action: e.target.value as Interaction['action'] })}
+              className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
+              title="动作类型"
+            >
+              {ACTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+            </select>
+          </div>
+          {/* Target frame for navigateTo/scrollTo/swap */}
           {(int.action === 'navigateTo' || int.action === 'scrollTo' || int.action === 'swap') && (
             <div>
               <label className="text-[9px] text-[var(--text-tertiary)]">目标画框</label>
@@ -215,6 +296,7 @@ function InteractionEditor({ shape }: { shape: Shape }) {
               </select>
             </div>
           )}
+          {/* URL for openUrl */}
           {int.action === 'openUrl' && (
             <div>
               <label className="text-[9px] text-[var(--text-tertiary)]">URL</label>
@@ -226,31 +308,64 @@ function InteractionEditor({ shape }: { shape: Shape }) {
               />
             </div>
           )}
+          {/* Overlay config for setOverlay action */}
+          {int.action === 'setOverlay' && (
+            <div className="space-y-1 p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border)]">
+              <div>
+                <label className="text-[9px] text-[var(--text-tertiary)]">Overlay 画框</label>
+                <select
+                  value={int.overlay?.targetFrameId || ''}
+                  onChange={e => updateInteraction(shape.id, idx, { overlay: { ...int.overlay, targetFrameId: e.target.value, anchor: int.overlay?.anchor || 'CENTER' } })}
+                  className="w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)] outline-none"
+                >
+                  <option value="">选择 Overlay...</option>
+                  {allFrames.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] text-[var(--text-tertiary)]">锚点位置</label>
+                <select
+                  value={int.overlay?.anchor || 'CENTER'}
+                  onChange={e => updateInteraction(shape.id, idx, { overlay: { ...int.overlay!, targetFrameId: int.overlay?.targetFrameId || '', anchor: e.target.value as OverlayConfig['anchor'] } })}
+                  className="w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)] outline-none"
+                >
+                  {OVERLAY_ANCHORS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id={`modal-${idx}`}
+                  checked={int.overlay?.modal ?? false}
+                  onChange={e => updateInteraction(shape.id, idx, { overlay: { ...int.overlay!, targetFrameId: int.overlay?.targetFrameId || '', anchor: int.overlay?.anchor || 'CENTER', modal: e.target.checked } })}
+                  className="accent-[var(--accent)]"
+                />
+                <label htmlFor={`modal-${idx}`} className="text-[9px] text-[var(--text-tertiary)]">模态 (点击背景关闭)</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id={`embed-${idx}`}
+                  checked={int.overlay?.embedWithin ?? false}
+                  onChange={e => updateInteraction(shape.id, idx, { overlay: { ...int.overlay!, targetFrameId: int.overlay?.targetFrameId || '', anchor: int.overlay?.anchor || 'CENTER', modal: int.overlay?.modal ?? false, embedWithin: e.target.checked } })}
+                  className="accent-[var(--accent)]"
+                />
+                <label htmlFor={`embed-${idx}`} className="text-[9px] text-[var(--text-tertiary)]">嵌入父级</label>
+              </div>
+            </div>
+          )}
+          {/* Transition & Easing */}
           <div className="grid grid-cols-2 gap-1.5">
             <div>
               <label className="text-[9px] text-[var(--text-tertiary)]">过渡</label>
-              <div className="relative">
-                <select
-                  value={int.transition || 'instant'}
-                  onChange={e => updateInteraction(shape.id, idx, { transition: e.target.value as Interaction['transition'] })}
-                  className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
-                  title="过渡效果"
-                >
-                  <option value="auto">自动</option>
-                  <option value="instant">立即</option>
-                  <option value="dissolve">渐变</option>
-                  <option value="slideLeft">左滑</option>
-                  <option value="slideRight">右滑</option>
-                  <option value="slideUp">上滑</option>
-                  <option value="slideDown">下滑</option>
-                  <option value="scale">缩放</option>
-                </select>
-                {int.transition === 'auto' && (
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[8px] text-[var(--accent)] font-medium pointer-events-none">
-                    Auto
-                  </span>
-                )}
-              </div>
+              <select
+                value={int.transition || 'dissolve'}
+                onChange={e => updateInteraction(shape.id, idx, { transition: e.target.value as Interaction['transition'] })}
+                className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
+                title="过渡效果"
+              >
+                {TRANSITIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
             </div>
             <div>
               <label className="text-[9px] text-[var(--text-tertiary)]">时长</label>
@@ -261,6 +376,18 @@ function InteractionEditor({ shape }: { shape: Shape }) {
                 title="过渡时长(ms)"
               />
             </div>
+          </div>
+          {/* Easing */}
+          <div>
+            <label className="text-[9px] text-[var(--text-tertiary)]">缓动曲线</label>
+            <select
+              value={int.easing || 'easeInOut'}
+              onChange={e => updateInteraction(shape.id, idx, { easing: e.target.value as Interaction['easing'] })}
+              className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
+              title="缓动曲线"
+            >
+              {EASINGS.map(e => <option key={e.value} value={e.value}>{e.label}</option>)}
+            </select>
           </div>
         </div>
       ))}
