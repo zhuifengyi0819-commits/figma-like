@@ -3,15 +3,22 @@ import { persist } from 'zustand/middleware';
 import { v4 as uuid } from 'uuid';
 import {
   Shape, Page, ChatMessage, Material, ToolType, AutoLayout, ComponentDef, VariantDef,
-  DesignToken, DesignTheme, Interaction, VersionSnapshot,
+  DesignToken, DesignTheme, Interaction, VersionSnapshot, TextStyle, TokenBindings,
   DEFAULT_SHAPE_PROPS, DEFAULT_AUTO_LAYOUT, PRESET_TOKENS,
 } from '@/lib/types';
 import { unionAABBs } from '@/lib/measurement';
+import { computeBooleanPath, canDoBoolean } from '@/lib/boolean';
 
 const MAX_HISTORY = 50;
 
 interface HistoryEntry { shapes: Shape[]; }
 type AlignType = 'left' | 'right' | 'top' | 'bottom' | 'centerH' | 'centerV' | 'distributeH' | 'distributeV';
+
+interface ContextMenuState {
+  x: number;
+  y: number;
+  targetIds: string[];
+}
 
 interface EditorState {
   pages: Page[];
@@ -22,9 +29,11 @@ interface EditorState {
   renamePage: (id: string, name: string) => void;
   setActivePageId: (id: string) => void;
   duplicatePage: (id: string) => string;
+  reorderPages: (fromId: string, toId: string) => void;
 
   addShape: (shape: Omit<Shape, 'id'> & { id?: string }) => string;
   updateShape: (id: string, updates: Partial<Shape>) => void;
+  updateShapes: (ids: string[], updates: Partial<Shape>) => void;
   deleteShape: (id: string) => void;
   deleteShapes: (ids: string[]) => void;
   _setPageShapes: (shapes: Shape[]) => void;
@@ -38,8 +47,12 @@ interface EditorState {
 
   canvasZoom: number;
   canvasPan: { x: number; y: number };
+  viewportWidth: number;
+  viewportHeight: number;
   setCanvasZoom: (zoom: number) => void;
   setCanvasPan: (pan: { x: number; y: number }) => void;
+  setViewportSize: (w: number, h: number) => void;
+  panToShapeIds: (ids: string[], viewportW?: number, viewportH?: number) => void;
 
   canvasBg: string;
   setCanvasBg: (bg: string) => void;
@@ -48,7 +61,24 @@ interface EditorState {
   addChatMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
   clearChat: () => void;
 
+  contextMenu: ContextMenuState | null;
+  showContextMenu: (menu: ContextMenuState) => void;
+  hideContextMenu: () => void;
+  arrayModalOpen: boolean;
+  setArrayModalOpen: (open: boolean) => void;
+
+  bringToFront: (id: string) => void;
+  sendToBack: (id: string) => void;
+
   materials: Material[];
+  textStyles: TextStyle[];
+  activeTextStyleId: string | null;
+  addTextStyle: (style: Omit<TextStyle, 'id'>) => void;
+  removeTextStyle: (id: string) => void;
+  updateTextStyle: (id: string, patch: Partial<TextStyle>) => void;
+  renameTextStyle: (id: string, name: string) => void;
+  applyTextStyle: (textIds: string[], styleId: string) => void;
+  setActiveTextStyleId: (id: string | null) => void;
   saveMaterial: (shape: Shape, name: string) => void;
   deleteMaterial: (id: string) => void;
 
@@ -56,6 +86,7 @@ interface EditorState {
   bringForward: (id: string) => void;
   sendBackward: (id: string) => void;
   duplicateShapes: (ids: string[]) => string[];
+  arrayCopy: (ids: string[], count: number, spacing: number, rotation: number, layout: 'circular' | 'linear' | 'grid') => void;
   moveGroupShapes: (groupId: string, leadId: string, newLeadX: number, newLeadY: number) => void;
   alignShapes: (ids: string[], alignment: AlignType) => void;
 
@@ -63,6 +94,7 @@ interface EditorState {
   getChildren: (parentId: string) => Shape[];
   applyAutoLayout: (frameId: string) => void;
   applyConstraints: (frameId: string, oldW: number, oldH: number, newW: number, newH: number) => void;
+  applyBooleanOperation: (ids: [string, string], op: 'union' | 'subtract' | 'intersect' | 'exclude') => void;
 
   history: HistoryEntry[];
   historyIndex: number;
@@ -72,6 +104,12 @@ interface EditorState {
 
   showHelp: boolean;
   setShowHelp: (show: boolean) => void;
+
+  showDevicePreview: boolean;
+  setShowDevicePreview: (show: boolean) => void;
+
+  showExportModal: boolean;
+  setShowExportModal: (show: boolean) => void;
 
   copiedStyle: Partial<Shape> | null;
   copyStyle: () => void;
@@ -85,8 +123,15 @@ interface EditorState {
   createComponent: (shapeIds: string[], name: string) => string;
   createInstance: (componentId: string, x: number, y: number) => string;
   addVariant: (componentId: string, variantName: string) => void;
+  deleteVariant: (componentId: string, variantId: string) => void;
+  renameVariant: (componentId: string, variantId: string, name: string) => void;
+  applyVariant: (shapeId: string, variantId: string) => void;
   syncInstances: (componentId: string) => void;
   detachInstance: (shapeId: string) => void;
+
+  editingComponentId: string | null;
+  enterComponentEditing: (componentId: string) => void;
+  exitComponentEditing: () => void;
 
   prototypeMode: boolean;
   setPrototypeMode: (on: boolean) => void;
@@ -104,12 +149,22 @@ interface EditorState {
   deleteToken: (themeId: string, tokenId: string) => void;
   getTokenValue: (tokenId: string) => string | undefined;
   applyTokenToShape: (shapeId: string, property: string, tokenId: string) => void;
+  bindToken: (shapeId: string, property: keyof TokenBindings, tokenId: string) => void;
+  unbindToken: (shapeId: string, property: keyof TokenBindings) => void;
 
   snapshots: VersionSnapshot[];
   saveSnapshot: (name: string) => string;
   restoreSnapshot: (id: string) => void;
   deleteSnapshot: (id: string) => void;
   renameSnapshot: (id: string, name: string) => void;
+
+  versionHistory: VersionSnapshot[];
+  currentVersionIndex: number;
+  maxVersions: number;
+  saveVersion: (name?: string) => void;
+  restoreVersion: (versionId: string) => void;
+  deleteVersion: (versionId: string) => void;
+  clearVersionHistory: () => void;
 }
 
 // === Helpers ===
@@ -142,7 +197,64 @@ function computeAutoLayout(frame: Shape, children: Shape[]): Map<string, { x: nu
   const innerW = fw - al.paddingLeft - al.paddingRight;
   const innerH = fh - al.paddingTop - al.paddingBottom;
   const isH = al.direction === 'horizontal';
+  const wrap = al.wrap && isH;
   const sizes = children.map(c => getChildSize(c));
+
+  // Wrap layout: pack children into rows
+  if (wrap) {
+    const rows: { child: Shape; size: { w: number; h: number }; idxInRow: number }[][] = [];
+    let currentRow: { child: Shape; size: { w: number; h: number }; idxInRow: number }[] = [];
+    let currentRowWidth = 0;
+    children.forEach((child, i) => {
+      const cs = sizes[i];
+      if (currentRow.length > 0 && currentRowWidth + al.gap + cs.w > innerW) {
+        rows.push(currentRow);
+        currentRow = [];
+        currentRowWidth = 0;
+      }
+      currentRow.push({ child, size: cs, idxInRow: currentRow.length });
+      currentRowWidth += (currentRow.length > 1 ? al.gap : 0) + cs.w;
+    });
+    if (currentRow.length > 0) rows.push(currentRow);
+
+    // Position each row
+    let rowY = al.paddingTop;
+    rows.forEach((row) => {
+      const rowH = Math.max(...row.map(r => r.size.h));
+      const rowW = row.reduce((sum, r, i) => sum + r.size.w + (i > 0 ? al.gap : 0), 0);
+      let rowMainOffset = 0;
+      if (al.justifyContent === 'center') rowMainOffset = (innerW - rowW) / 2;
+      else if (al.justifyContent === 'end') rowMainOffset = innerW - rowW;
+      else if (al.justifyContent === 'space-between' && row.length > 1) {
+        const space = (innerW - rowW) / (row.length - 1);
+        let cursor = 0;
+        row.forEach(({ child, size }) => {
+          const cross = computeCrossOffset(al, rowH, size.h);
+          const x = frame.x + al.paddingLeft + cursor + space * (row.indexOf(row.find(r => r.child.id === child.id)!));
+          const y = frame.y + rowY + cross;
+          if (child.type === 'circle' || child.type === 'star' || child.type === 'triangle') {
+            updates.set(child.id, { x: x + size.w / 2, y: y + size.h / 2 });
+          } else { updates.set(child.id, { x, y }); }
+          cursor += size.w + space;
+        });
+        rowY += rowH + al.gap;
+        return;
+      }
+      let cursor = rowMainOffset;
+      row.forEach(({ child, size }) => {
+        const cross = computeCrossOffset(al, rowH, size.h);
+        const x = frame.x + al.paddingLeft + cursor;
+        const y = frame.y + rowY + cross;
+        if (child.type === 'circle' || child.type === 'star' || child.type === 'triangle') {
+          updates.set(child.id, { x: x + size.w / 2, y: y + size.h / 2 });
+        } else { updates.set(child.id, { x, y }); }
+        cursor += size.w + al.gap;
+      });
+      rowY += rowH + al.gap;
+    });
+    return updates;
+  }
+
   const totalMain = sizes.reduce((sum, s) => sum + (isH ? s.w : s.h), 0);
   const totalGap = al.gap * (children.length - 1);
   let mainOffset = 0;
@@ -211,13 +323,21 @@ export const useEditorStore = create<EditorState>()(
       activeTool: 'select',
       canvasZoom: 1,
       canvasPan: { x: 0, y: 0 },
+      viewportWidth: 1440,
+      viewportHeight: 900,
       canvasBg: '#1A1A1D',
       chatHistory: [],
+      contextMenu: null,
+      arrayModalOpen: false,
       materials: [],
+      textStyles: [],
+      activeTextStyleId: null,
       history: [],
       historyIndex: -1,
       showHelp: false,
+      showDevicePreview: false,
       components: [],
+      editingComponentId: null,
       prototypeMode: false,
       themes: [{ id: defaultThemeId, name: 'Default', tokens: [...PRESET_TOKENS] }],
       activeThemeId: defaultThemeId,
@@ -264,7 +384,22 @@ export const useEditorStore = create<EditorState>()(
         return newId;
       },
 
+      reorderPages: (fromId, toId) => {
+        set(state => {
+          const pageIndex = state.pages.findIndex(p => p.id === fromId);
+          const toIndex = state.pages.findIndex(p => p.id === toId);
+          if (pageIndex === -1 || toIndex === -1) return state;
+          const newPages = [...state.pages];
+          const [removed] = newPages.splice(pageIndex, 1);
+          newPages.splice(toIndex, 0, removed);
+          return { pages: newPages };
+        });
+      },
+
       setShowHelp: (show) => set({ showHelp: show }),
+      setShowDevicePreview: (show) => set({ showDevicePreview: show }),
+      showExportModal: false,
+      setShowExportModal: (show) => set({ showExportModal: show }),
       copiedStyle: null,
 
       copyStyle: () => {
@@ -301,15 +436,48 @@ export const useEditorStore = create<EditorState>()(
         });
       },
 
+      // Moves shape `id` to position `targetIndex` among its siblings (shapes with same parentId).
+      // targetIndex is relative to the sibling list (0 = first sibling).
       reorderShape: (id, targetIndex) => {
+        const { shapes } = get();
+        const shape = shapes.find(s => s.id === id);
+        if (!shape) return;
+        const parentId = shape.parentId;
+        // All siblings including the shape itself, in array order
+        const siblings = shapes.filter(s => s.parentId === parentId);
+        const fromIdx = siblings.findIndex(s => s.id === id);
+        if (fromIdx === -1) return;
+        // Clamp target
+        const clampedTarget = Math.max(0, Math.min(targetIndex, siblings.length - 1));
+        if (fromIdx === clampedTarget) return;
+
         get().pushHistory();
         set(state => {
           const ps = updatePageShapes(state.pages, state.activePageId, ss => {
-            const idx = ss.findIndex(s => s.id === id);
-            if (idx === -1 || targetIndex < 0 || targetIndex >= ss.length) return ss;
+            // Build ordered list of sibling ids
+            const siblingIds = [...siblings.map(s => s.id)];
+            // Remove from current position
+            siblingIds.splice(fromIdx, 1);
+            // Insert at target position
+            siblingIds.splice(clampedTarget, 0, id);
+            // Now rebuild the full array: siblings appear in siblingIds order, others stay where they were
+            
+            // Interleave: for each sibling position, put the right sibling; non-siblings go between top-level items
+            // Strategy: start with non-siblings, insert siblings at their relative positions
+            // Better: keep non-siblings in place, reorder only the sibling block
             const arr = [...ss];
-            const [item] = arr.splice(idx, 1);
-            arr.splice(targetIndex, 0, item);
+            // Find the flat indices of all siblings in the current array
+            const siblingFlatIndices = siblingIds
+              .map(sid => arr.findIndex(a => a.id === sid))
+              .filter(i => i !== -1)
+              .sort((a, b) => a - b);
+            if (siblingFlatIndices.length === 0) return ss;
+            // Extract sibling shapes in current array order
+            const currentSiblingShapes = siblingFlatIndices.map(i => arr[i]);
+            // Build new sibling order
+            const newSiblingOrder = siblingIds.map(sid => currentSiblingShapes.find(s => s.id === sid)!).filter(Boolean);
+            // Write back
+            siblingFlatIndices.forEach((fi, i) => { arr[fi] = newSiblingOrder[i]; });
             return arr;
           });
           return { pages: ps.pages, shapes: ps.shapes };
@@ -429,6 +597,16 @@ export const useEditorStore = create<EditorState>()(
         });
       },
 
+      updateShapes: (ids, updates) => {
+        const idSet = new Set(ids);
+        set(state => {
+          const ps = updatePageShapes(state.pages, state.activePageId, ss =>
+            ss.map(s => idSet.has(s.id) ? { ...s, ...updates } : s),
+          );
+          return { pages: ps.pages, shapes: ps.shapes };
+        });
+      },
+
       deleteShape: (id) => {
         get().pushHistory();
         set(state => {
@@ -462,6 +640,54 @@ export const useEditorStore = create<EditorState>()(
       setActiveTool: (tool) => set({ activeTool: tool }),
       setCanvasZoom: (zoom) => set({ canvasZoom: Math.max(0.1, Math.min(5, zoom)) }),
       setCanvasPan: (pan) => set({ canvasPan: pan }),
+      setViewportSize: (w, h) => set({ viewportWidth: w, viewportHeight: h }),
+
+
+
+      /**
+       * 将指定 shapes 滚入视野并居中显示
+       * viewportW/viewportH 由 Canvas 组件在调用处传入
+       */
+      panToShapeIds: (ids: string[], viewportW?: number, viewportH?: number) => {
+        const { shapes, canvasZoom, viewportWidth, viewportHeight } = get();
+        const vpW = viewportW ?? viewportWidth;
+        const vpH = viewportH ?? viewportHeight;
+        const targetShapes = shapes.filter(s => ids.includes(s.id) && s.visible);
+        if (targetShapes.length === 0) return;
+
+        // 计算包围盒
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const s of targetShapes) {
+          const x = s.x ?? 0;
+          const y = s.y ?? 0;
+          if (s.type === 'circle' || s.type === 'star' || s.type === 'triangle') {
+            const r = s.radius ?? 50;
+            minX = Math.min(minX, x - r); maxX = Math.max(maxX, x + r);
+            minY = Math.min(minY, y - r); maxY = Math.max(maxY, y + r);
+          } else {
+            const w = s.width ?? 100;
+            const h = s.height ?? 100;
+            minX = Math.min(minX, x); maxX = Math.max(maxX, x + w);
+            minY = Math.min(minY, y); maxY = Math.max(maxY, y + h);
+          }
+        }
+
+        const contentW = maxX - minX;
+        const contentH = maxY - minY;
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        // 计算合适的 zoom：以内容充满视口 70% 为目标
+        const zoomX = (vpW * 0.7) / contentW;
+        const zoomY = (vpH * 0.7) / contentH;
+        const newZoom = Math.max(0.1, Math.min(canvasZoom, Math.min(zoomX, zoomY)));
+
+        // 计算 pan 使内容居中
+        const panX = vpW / 2 - centerX * newZoom;
+        const panY = vpH / 2 - centerY * newZoom;
+
+        set({ canvasZoom: newZoom, canvasPan: { x: panX, y: panY } });
+      },
 
       addChatMessage: (message) => {
         const newMessage: ChatMessage = { ...message, id: uuid(), timestamp: Date.now() };
@@ -470,7 +696,7 @@ export const useEditorStore = create<EditorState>()(
       clearChat: () => set({ chatHistory: [] }),
 
       saveMaterial: (shape, name) => {
-        const { id: _id, x: _x, y: _y, name: _n, ...rest } = shape;
+        const { ...rest } = shape;
         set((state) => ({ materials: [...state.materials, { id: uuid(), name, shape: rest as Omit<Shape, 'id' | 'x' | 'y' | 'name'>, createdAt: Date.now() }] }));
       },
       deleteMaterial: (id) => set(state => ({ materials: state.materials.filter(m => m.id !== id) })),
@@ -484,22 +710,78 @@ export const useEditorStore = create<EditorState>()(
       },
 
       bringForward: (id) => {
+        const { shapes } = get();
+        const shape = shapes.find(s => s.id === id);
+        if (!shape) return;
+        const parentId = shape.parentId;
+        const siblings = shapes.filter(s => s.parentId === parentId);
+        const idx = siblings.findIndex(s => s.id === id);
+        if (idx === -1 || idx === siblings.length - 1) return;
+        get().pushHistory();
         set(state => {
           const ps = updatePageShapes(state.pages, state.activePageId, ss => {
-            const idx = ss.findIndex(s => s.id === id);
-            if (idx === -1 || idx === ss.length - 1) return ss;
-            const arr = [...ss]; [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]]; return arr;
+            const arr = [...ss];
+            const flatIdx = arr.findIndex(s => s.id === id);
+            const nextFlatIdx = arr.findIndex(s => s.id === siblings[idx + 1].id);
+            if (flatIdx !== -1 && nextFlatIdx !== -1) {
+              [arr[flatIdx], arr[nextFlatIdx]] = [arr[nextFlatIdx], arr[flatIdx]];
+            }
+            return arr;
           });
           return { pages: ps.pages, shapes: ps.shapes };
         });
       },
 
       sendBackward: (id) => {
+        const { shapes } = get();
+        const shape = shapes.find(s => s.id === id);
+        if (!shape) return;
+        const parentId = shape.parentId;
+        const siblings = shapes.filter(s => s.parentId === parentId);
+        const idx = siblings.findIndex(s => s.id === id);
+        if (idx <= 0) return;
+        get().pushHistory();
+        set(state => {
+          const ps = updatePageShapes(state.pages, state.activePageId, ss => {
+            const arr = [...ss];
+            const flatIdx = arr.findIndex(s => s.id === id);
+            const prevFlatIdx = arr.findIndex(s => s.id === siblings[idx - 1].id);
+            if (flatIdx !== -1 && prevFlatIdx !== -1) {
+              [arr[flatIdx], arr[prevFlatIdx]] = [arr[prevFlatIdx], arr[flatIdx]];
+            }
+            return arr;
+          });
+          return { pages: ps.pages, shapes: ps.shapes };
+        });
+      },
+
+      showContextMenu: (menu) => set({ contextMenu: menu }),
+      hideContextMenu: () => set({ contextMenu: null }),
+      setArrayModalOpen: (open) => set({ arrayModalOpen: open }),
+
+      bringToFront: (id) => {
         set(state => {
           const ps = updatePageShapes(state.pages, state.activePageId, ss => {
             const idx = ss.findIndex(s => s.id === id);
-            if (idx <= 0) return ss;
-            const arr = [...ss]; [arr[idx], arr[idx - 1]] = [arr[idx - 1], arr[idx]]; return arr;
+            if (idx === -1 || idx === ss.length - 1) return ss;
+            const arr = [...ss];
+            const [item] = arr.splice(idx, 1);
+            arr.push(item);
+            return arr;
+          });
+          return { pages: ps.pages, shapes: ps.shapes };
+        });
+      },
+
+      sendToBack: (id) => {
+        set(state => {
+          const ps = updatePageShapes(state.pages, state.activePageId, ss => {
+            const idx = ss.findIndex(s => s.id === id);
+            if (idx === -1 || idx === 0) return ss;
+            const arr = [...ss];
+            const [item] = arr.splice(idx, 1);
+            arr.unshift(item);
+            return arr;
           });
           return { pages: ps.pages, shapes: ps.shapes };
         });
@@ -540,6 +822,44 @@ export const useEditorStore = create<EditorState>()(
           return { pages: ps.pages, shapes: ps.shapes, selectedIds: newIds };
         });
         return newIds;
+      },
+
+      arrayCopy: (ids, count, spacing, rotation, layout) => {
+        if (ids.length === 0 || count < 2) return;
+        get().pushHistory();
+        const shapes = get().shapes;
+        const newIds: string[] = [];
+        const newShapes: Shape[] = [];
+        ids.forEach(id => {
+          const s = shapes.find(sh => sh.id === id);
+          if (!s) return;
+          for (let i = 1; i < count; i++) {
+            const newId = uuid();
+            newIds.push(newId);
+            let nx = s.x, ny = s.y;
+            if (layout === 'linear') {
+              nx = s.x + (s.width || 100 + (s.width || 0) + spacing) * i;
+              ny = s.y;
+            } else if (layout === 'grid') {
+              const cols = Math.ceil(Math.sqrt(count));
+              nx = s.x + ((s.width || 100) + spacing) * (i % cols);
+              ny = s.y + ((s.height || 100) + spacing) * Math.floor(i / cols);
+            } else {
+              // circular / rotate copy around the shape center
+              const cx = s.x + (s.width || 100) / 2;
+              const cy = s.y + (s.height || 100) / 2;
+              const rad = (rotation * i * Math.PI) / 180;
+              const r = spacing;
+              nx = cx + r * Math.cos(rad) - (s.width || 100) / 2;
+              ny = cy + r * Math.sin(rad) - (s.height || 100) / 2;
+            }
+            newShapes.push({ ...s, id: newId, x: nx, y: ny, name: `${s.name}×${i + 1}`, rotation: layout !== 'linear' && layout !== 'grid' ? (s.rotation || 0) + rotation * i : s.rotation });
+          }
+        });
+        set(state => {
+          const ps = updatePageShapes(state.pages, state.activePageId, ss => [...ss, ...newShapes]);
+          return { pages: ps.pages, shapes: ps.shapes, selectedIds: newIds };
+        });
       },
 
       moveGroupShapes: (groupId, leadId, newLeadX, newLeadY) => {
@@ -594,24 +914,32 @@ export const useEditorStore = create<EditorState>()(
         if (dw === 0 && dh === 0) return;
         const updates = new Map<string, Partial<Shape>>();
         for (const child of children) {
-          const c = child.constraints || { horizontal: 'left', vertical: 'top' };
+          const c = child.constraints || { horizontal: 'min', vertical: 'min' };
           const cs = getChildSize(child);
-          const relX = child.x - frame.x, relY = child.y - frame.y;
           let nx = child.x, ny = child.y, nw = cs.w, nh = cs.h;
+
+          // Apply horizontal constraints
           switch (c.horizontal) {
-            case 'left': break;
-            case 'right': nx = child.x + dw; break;
-            case 'center': nx = child.x + dw / 2; break;
-            case 'leftRight': nw = cs.w + dw; break;
-            case 'scale': { const ratio = newW / oldW; nx = frame.x + relX * ratio; nw = cs.w * ratio; break; }
+            case 'min': break; // Pin to left edge, no change
+            case 'max': nx = child.x + dw; break; // Pin to right edge
+            case 'center': nx = child.x + dw / 2; break; // Center horizontally
+            case 'stretch': nw = Math.max(10, cs.w + dw); break; // Stretch horizontally
           }
+
+          // Apply vertical constraints
           switch (c.vertical) {
-            case 'top': break;
-            case 'bottom': ny = child.y + dh; break;
-            case 'center': ny = child.y + dh / 2; break;
-            case 'topBottom': nh = cs.h + dh; break;
-            case 'scale': { const ratio = newH / oldH; ny = frame.y + relY * ratio; nh = cs.h * ratio; break; }
+            case 'min': break; // Pin to top edge, no change
+            case 'max': ny = child.y + dh; break; // Pin to bottom edge
+            case 'center': ny = child.y + dh / 2; break; // Center vertically
+            case 'stretch': nh = Math.max(10, cs.h + dh); break; // Stretch vertically
           }
+
+          // Apply min/max dimension constraints
+          if (child.minWidth !== undefined && nw < child.minWidth) nw = child.minWidth;
+          if (child.maxWidth !== undefined && nw > child.maxWidth) nw = child.maxWidth;
+          if (child.minHeight !== undefined && nh < child.minHeight) nh = child.minHeight;
+          if (child.maxHeight !== undefined && nh > child.maxHeight) nh = child.maxHeight;
+
           const patch: Partial<Shape> = {};
           if (nx !== child.x) patch.x = nx;
           if (ny !== child.y) patch.y = ny;
@@ -630,6 +958,43 @@ export const useEditorStore = create<EditorState>()(
             return u ? { ...s, ...u } : s;
           }));
           return { pages: ps.pages, shapes: ps.shapes };
+        });
+      },
+
+      applyBooleanOperation: (ids, op) => {
+        if (ids.length !== 2) return;
+        const [aId, bId] = ids;
+        const shapeA = get().shapes.find(s => s.id === aId);
+        const shapeB = get().shapes.find(s => s.id === bId);
+        if (!shapeA || !shapeB) return;
+        if (!canDoBoolean(shapeA) || !canDoBoolean(shapeB)) return;
+        const pathData = computeBooleanPath(shapeA, shapeB, op);
+        if (!pathData) return;
+        get().pushHistory();
+        const newShape: Shape = {
+          id: uuid(),
+          type: 'path',
+          x: shapeA.x,
+          y: shapeA.y,
+          fill: shapeA.fill,
+          stroke: shapeA.stroke,
+          strokeWidth: shapeA.strokeWidth,
+          opacity: shapeA.opacity,
+          rotation: shapeA.rotation,
+          visible: true,
+          locked: false,
+          name: `${shapeA.name} ∩ ${shapeB.name}`,
+          pathData,
+          booleanOp: op,
+          booleanSourceIds: [aId, bId],
+          pathPoints: [],
+          closePath: true,
+        };
+        set(state => {
+          const ps = updatePageShapes(state.pages, state.activePageId, ss =>
+            [...ss.filter(s => s.id !== aId && s.id !== bId), newShape]
+          );
+          return { pages: ps.pages, shapes: ps.shapes, selectedIds: [newShape.id] };
         });
       },
 
@@ -690,9 +1055,18 @@ export const useEditorStore = create<EditorState>()(
         const instanceId = uuid();
         const offsetX = comp.shapes[0]?.x || 0;
         const offsetY = comp.shapes[0]?.y || 0;
+        // 建立旧ID → 新ID 的映射，保留嵌套关系
+        const idMap = new Map<string, string>();
+        comp.shapes.forEach(s => idMap.set(s.id, uuid()));
         const instanceShapes: Shape[] = comp.shapes.map(s => ({
-          ...s, id: uuid(), x: s.x - offsetX + x, y: s.y - offsetY + y,
-          masterComponentId: componentId, isMainComponent: false, groupId: instanceId,
+          ...s,
+          id: idMap.get(s.id)!,
+          x: s.x - offsetX + x,
+          y: s.y - offsetY + y,
+          masterComponentId: componentId,
+          isMainComponent: false,
+          groupId: instanceId,
+          parentId: s.parentId && idMap.has(s.parentId) ? idMap.get(s.parentId) : s.parentId,
         }));
         get().pushHistory();
         set(state => {
@@ -708,6 +1082,40 @@ export const useEditorStore = create<EditorState>()(
             c.id === componentId ? { ...c, variants: [...c.variants, { id: uuid(), name: variantName, overrides: {} } as VariantDef] } : c
           ),
         }));
+      },
+
+      deleteVariant: (componentId, variantId) => {
+        set(state => ({
+          components: state.components.map(c =>
+            c.id === componentId ? { ...c, variants: c.variants.filter(v => v.id !== variantId) } : c
+          ),
+        }));
+      },
+
+      renameVariant: (componentId, variantId, name) => {
+        set(state => ({
+          components: state.components.map(c =>
+            c.id === componentId ? { ...c, variants: c.variants.map(v => v.id === variantId ? { ...v, name } : v) } : c
+          ),
+        }));
+      },
+
+      applyVariant: (shapeId, variantId) => {
+        const { components, shapes } = get();
+        const shape = shapes.find(s => s.id === shapeId);
+        if (!shape || !shape.masterComponentId) return;
+        const comp = components.find(c => c.id === shape.masterComponentId);
+        if (!comp) return;
+        const variant = comp.variants.find(v => v.id === variantId);
+        if (!variant) return;
+
+        set(state => {
+          const ps = updatePageShapes(state.pages, state.activePageId, ss =>
+            ss.map(s => s.id === shapeId ? { ...s, overrides: variant.overrides } : s)
+          );
+          return { pages: ps.pages, shapes: ps.shapes };
+        });
+        get().syncInstances(shape.masterComponentId);
       },
 
       syncInstances: (componentId) => {
@@ -743,6 +1151,17 @@ export const useEditorStore = create<EditorState>()(
           ));
           return { pages: ps.pages, shapes: ps.shapes };
         });
+      },
+
+      // === Component Editing Mode ===
+      enterComponentEditing: (componentId) => {
+        const shapes = get().shapes;
+        const childIds = shapes.filter(s => s.parentId === componentId).map(s => s.id);
+        set({ editingComponentId: componentId, selectedIds: childIds });
+      },
+
+      exitComponentEditing: () => {
+        set({ editingComponentId: null });
       },
 
       // === Prototype ===
@@ -800,6 +1219,57 @@ export const useEditorStore = create<EditorState>()(
         return id;
       },
       updateToken: (themeId, tokenId, patch) => {
+        // First, get the updated token value to propagate to shapes
+        const state = get();
+        const theme = state.themes.find(t => t.id === themeId);
+        const token = theme?.tokens.find(t => t.id === tokenId);
+        const newValue = patch.value ?? token?.value;
+        
+        // If value changed, propagate to all shapes bound to this token
+        if (patch.value !== undefined && newValue !== undefined) {
+          const shapesToUpdate: { id: string; updates: Partial<Shape> }[] = [];
+          for (const shape of state.shapes) {
+            const bindings = (shape as Shape).tokenBindings;
+            if (!bindings) continue;
+            // Check if any property is bound to this token
+            for (const [prop, boundTokenId] of Object.entries(bindings)) {
+              if (boundTokenId === tokenId) {
+                const updates: Partial<Shape> = {};
+                if (prop === 'fill') updates.fill = newValue;
+                else if (prop === 'stroke') updates.stroke = newValue;
+                else if (prop === 'opacity') updates.opacity = parseFloat(newValue);
+                else if (prop === 'cornerRadius') updates.cornerRadius = parseInt(newValue);
+                else if (prop === 'fontSize') updates.fontSize = parseInt(newValue);
+                if (Object.keys(updates).length > 0) {
+                  shapesToUpdate.push({ id: shape.id, updates });
+                }
+                break;
+              }
+            }
+          }
+          
+          if (shapesToUpdate.length > 0) {
+            set(state => {
+              const ps = updatePageShapes(state.pages, state.activePageId, ss =>
+                ss.map(s => {
+                  const update = shapesToUpdate.find(u => u.id === s.id);
+                  return update ? { ...s, ...update.updates } : s;
+                })
+              );
+              return {
+                themes: state.themes.map(t => t.id === themeId
+                  ? { ...t, tokens: t.tokens.map(tok => tok.id === tokenId ? { ...tok, ...patch } : tok) }
+                  : t
+                ),
+                pages: ps.pages,
+                shapes: ps.shapes,
+              };
+            });
+            return;
+          }
+        }
+        
+        // No shape update needed, just update the token
         set(state => ({
           themes: state.themes.map(t => t.id === themeId
             ? { ...t, tokens: t.tokens.map(tok => tok.id === tokenId ? { ...tok, ...patch } : tok) }
@@ -829,6 +1299,35 @@ export const useEditorStore = create<EditorState>()(
           const ps = updatePageShapes(state.pages, state.activePageId, ss => ss.map(s =>
             s.id === shapeId ? { ...s, ...propUpdate, tokenRefs: { ...(s.tokenRefs || {}), [property]: tokenId } } : s
           ));
+          return { pages: ps.pages, shapes: ps.shapes };
+        });
+      },
+      bindToken: (shapeId, property, tokenId) => {
+        const value = get().getTokenValue(tokenId);
+        if (!value) return;
+        const propUpdate: Partial<Shape> = {};
+        if (property === 'fill') propUpdate.fill = value;
+        else if (property === 'stroke') propUpdate.stroke = value;
+        else if (property === 'opacity') propUpdate.opacity = parseFloat(value);
+        else if (property === 'cornerRadius') propUpdate.cornerRadius = parseInt(value);
+        else if (property === 'fontSize') propUpdate.fontSize = parseInt(value);
+        set(state => {
+          const ps = updatePageShapes(state.pages, state.activePageId, ss => ss.map(s =>
+            s.id === shapeId
+              ? { ...s, ...propUpdate, tokenBindings: { ...(s.tokenBindings || {}), [property]: tokenId } }
+              : s
+          ));
+          return { pages: ps.pages, shapes: ps.shapes };
+        });
+      },
+      unbindToken: (shapeId, property) => {
+        set(state => {
+          const ps = updatePageShapes(state.pages, state.activePageId, ss => ss.map(s => {
+            if (s.id !== shapeId) return s;
+            const bindings = { ...(s.tokenBindings || {}) };
+            delete bindings[property];
+            return { ...s, tokenBindings: bindings };
+          }));
           return { pages: ps.pages, shapes: ps.shapes };
         });
       },
@@ -863,6 +1362,81 @@ export const useEditorStore = create<EditorState>()(
       renameSnapshot: (id, name) => set(state => ({
         snapshots: state.snapshots.map(s => s.id === id ? { ...s, name } : s),
       })),
+
+      // Version History
+      versionHistory: [],
+      currentVersionIndex: -1,
+      maxVersions: 50,
+      saveVersion: (name) => {
+        const state = get();
+        const snapshot: VersionSnapshot = {
+          id: uuid(),
+          name: name || `版本 ${state.versionHistory.length + 1}`,
+          timestamp: Date.now(),
+          shapes: JSON.parse(JSON.stringify(state.shapes)),
+        };
+        set(state => ({
+          versionHistory: [snapshot, ...state.versionHistory].slice(0, state.maxVersions),
+          currentVersionIndex: -1,
+        }));
+      },
+      restoreVersion: (versionId) => {
+        const state = get();
+        const version = state.versionHistory.find(v => v.id === versionId);
+        if (!version) return;
+        try {
+          const shapes = JSON.parse(JSON.stringify(version.shapes));
+          set(state => {
+            const ps = updatePageShapes(state.pages, state.activePageId, () => shapes);
+            return { 
+              pages: ps.pages, 
+              shapes: ps.shapes,
+              currentVersionIndex: state.versionHistory.findIndex(v => v.id === versionId),
+            };
+          });
+        } catch (e) {
+          console.error('Failed to restore version:', e);
+        }
+      },
+      deleteVersion: (versionId) => set(state => ({
+        versionHistory: state.versionHistory.filter(v => v.id !== versionId),
+      })),
+      clearVersionHistory: () => set({ versionHistory: [], currentVersionIndex: -1 }),
+
+      // Text Styles
+      addTextStyle: (style: Omit<TextStyle, 'id'>) => {
+        const existing = get().textStyles.find(s => s.name === style.name);
+        if (existing) return;
+        const id = uuid();
+        set(state => ({ textStyles: [...state.textStyles, { ...style, id }] }));
+      },
+      removeTextStyle: (id) => {
+        set(state => ({ textStyles: state.textStyles.filter(s => s.id !== id) }));
+      },
+      updateTextStyle: (id, patch) => {
+        set(state => ({
+          textStyles: state.textStyles.map(s => s.id === id ? { ...s, ...patch } : s),
+        }));
+      },
+      renameTextStyle: (id, name) => set(state => ({
+        textStyles: state.textStyles.map(s => s.id === id ? { ...s, name } : s),
+      })),
+      applyTextStyle: (textIds, styleId) => {
+        const style = get().textStyles.find(s => s.id === styleId);
+        if (!style) return;
+        const { fontFamily, fontSize, fontWeight, fill, lineHeight, letterSpacing, textAlign } = style;
+        get().pushHistory();
+        set(state => {
+          const ps = updatePageShapes(state.pages, state.activePageId, ss =>
+            ss.map(s => textIds.includes(s.id)
+              ? { ...s, textStyleId: styleId, fontFamily, fontSize, fontWeight, fill, lineHeight, letterSpacing, textAlign }
+              : s
+            )
+          );
+          return { pages: ps.pages, shapes: ps.shapes };
+        });
+      },
+      setActiveTextStyleId: (id) => set({ activeTextStyleId: id }),
     }),
     {
       name: 'ai-canvas-editor',
@@ -870,12 +1444,14 @@ export const useEditorStore = create<EditorState>()(
         pages: state.pages,
         activePageId: state.activePageId,
         materials: state.materials,
+        textStyles: state.textStyles,
         chatHistory: state.chatHistory.slice(-20),
         canvasBg: state.canvasBg,
         components: state.components,
         themes: state.themes,
         activeThemeId: state.activeThemeId,
         snapshots: state.snapshots,
+        versionHistory: state.versionHistory,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
