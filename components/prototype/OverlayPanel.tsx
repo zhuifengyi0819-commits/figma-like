@@ -11,7 +11,7 @@ interface OverlayPanelProps {
   targetFrame: Shape;
   allShapes: Shape[];
   config: OverlayConfig;
-  triggerRect: DOMRect | null;
+  triggerRect: { x: number; y: number; width: number; height: number } | null;
   visible: boolean;
   onClose: () => void;
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Play, GitBranch, Edit3, Grid } from 'lucide-react';
+import { Play, Edit3, Grid } from 'lucide-react';
 
 interface PrototypeToolbarProps {
   onOverview: () => void;

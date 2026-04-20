@@ -27,7 +27,7 @@ export default function OverlayPortal({ overlays, allShapes, onClose }: OverlayP
             targetFrame={targetFrame}
             allShapes={allShapes}
             config={overlay.config}
-            triggerRect={null} // triggerRect not available from DOM in this context
+            triggerRect={overlay.triggerRect}
             visible={true}
             onClose={() => handleClose(overlay.id)}
           />

@@ -138,12 +138,12 @@ export default function PrototypeOverview({ onClose, onEditEdge }: PrototypeOver
                   key={edge.id}
                   sourceX={sourcePos.x}
                   sourceY={sourcePos.y}
-                  sourceWidth={240}
-                  sourceHeight={160}
+                  sourceWidth={sourceFrame.width || 240}
+                  sourceHeight={sourceFrame.height || 160}
                   targetX={targetPos.x}
                   targetY={targetPos.y}
-                  targetWidth={240}
-                  targetHeight={160}
+                  targetWidth={targetFrame.width || 240}
+                  targetHeight={targetFrame.height || 160}
                   trigger={edge.trigger}
                   selected={edge.id === selectedEdgeId}
                   onClick={() => handleEdgeClick(edge.id)}

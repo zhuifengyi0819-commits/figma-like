@@ -68,11 +68,12 @@ function applyOverrides(shape: Shape): Shape {
 interface TriggerHandlerProps {
   shape: Shape;
   allShapes: Shape[];
+  shapeRef: React.RefObject<HTMLElement | null>;
   onNavigate: (frameId: string, transition?: string, duration?: number, easing?: string, sourceShapeId?: string) => void;
-  onOverlay: (targetFrameId: string, config: OverlayConfig, triggerElementId: string) => void;
+  onOverlay: (targetFrameId: string, config: OverlayConfig, triggerElementId: string, triggerRect: DOMRect | null) => void;
 }
 
-function useTriggerHandlers({ shape, allShapes, onNavigate, onOverlay }: TriggerHandlerProps) {
+function useTriggerHandlers({ shape, allShapes, shapeRef, onNavigate, onOverlay }: TriggerHandlerProps) {
   const interactions = shape.interactions || [];
 
   const fireInteraction = useCallback((trigger: TriggerType) => {
@@ -87,10 +88,11 @@ function useTriggerHandlers({ shape, allShapes, onNavigate, onOverlay }: Trigger
       } else if (int.action === 'back') {
         // handled at player level
       } else if (int.action === 'setOverlay' && int.targetFrameId && int.overlay) {
-        onOverlay(int.targetFrameId, int.overlay, shape.id);
+        const rect = shapeRef.current?.getBoundingClientRect() ?? null;
+        onOverlay(int.targetFrameId, int.overlay, shape.id, rect);
       }
     }
-  }, [interactions, onNavigate, onOverlay, shape.id]);
+  }, [interactions, onNavigate, onOverlay, shape.id, shapeRef]);
 
   return { fireInteraction, interactions };
 }
@@ -98,8 +100,9 @@ function useTriggerHandlers({ shape, allShapes, onNavigate, onOverlay }: Trigger
 interface PrototypeShapeProps {
   shape: Shape;
   allShapes: Shape[];
+  shapeRef?: React.RefObject<HTMLElement | null>;
   onNavigate: (frameId: string, transition?: string, duration?: number, easing?: string, sourceShapeId?: string) => void;
-  onOverlay: (targetFrameId: string, config: OverlayConfig, triggerElementId: string) => void;
+  onOverlay: (targetFrameId: string, config: OverlayConfig, triggerElementId: string, triggerRect: DOMRect | null) => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
   onMouseDown?: () => void;
@@ -109,6 +112,7 @@ interface PrototypeShapeProps {
 function PrototypeShape({
   shape,
   allShapes,
+  shapeRef,
   onNavigate,
   onOverlay,
   onMouseEnter,
@@ -116,7 +120,9 @@ function PrototypeShape({
   onMouseDown,
   onMouseUp,
 }: PrototypeShapeProps) {
-  const { fireInteraction, interactions } = useTriggerHandlers({ shape, allShapes, onNavigate, onOverlay });
+  const innerRef = useRef<HTMLElement | null>(null);
+  const resolvedRef = shapeRef ?? innerRef;
+  const { fireInteraction, interactions } = useTriggerHandlers({ shape, allShapes, shapeRef: resolvedRef, onNavigate, onOverlay });
 
   const hasClick = interactions.some(i => i.trigger === 'click');
   const hasHover = interactions.some(i => i.trigger === 'hover');
@@ -169,21 +175,22 @@ function PrototypeShape({
 
   const handleInteraction = (trigger: TriggerType) => fireInteraction(trigger);
 
-  const wrapperProps = {
-    onClick: hasClick ? handleClick : undefined,
-    onMouseEnter: handleMouseEnter,
-    onMouseLeave: handleMouseLeave,
-    onMouseDown: handleMouseDown,
-    onMouseUp: handleMouseUp,
-    onMouseMove: handleMouseMove,
-    className: hasClick ? 'cursor-pointer' : '',
-  };
+  const setRef = useCallback((el: HTMLElement | null) => {
+    (resolvedRef as React.MutableRefObject<HTMLElement | null>).current = el;
+  }, [resolvedRef]);
 
   if (shape.type === 'text') {
     return (
       <span
+        ref={setRef}
         style={style}
-        {...wrapperProps}
+        onClick={hasClick ? handleClick : undefined}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseMove={handleMouseMove}
+        className={hasClick ? 'cursor-pointer' : ''}
       >
         {shape.text}
       </span>
@@ -193,16 +200,33 @@ function PrototypeShape({
   if (shape.type === 'image') {
     return (
       <Image
+        ref={setRef as unknown as React.Ref<HTMLImageElement>}
         src={shape.src ?? ''}
         alt={shape.name}
         style={{ ...style, objectFit: 'cover' } as React.CSSProperties}
-        {...wrapperProps}
+        onClick={hasClick ? handleClick : undefined}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseMove={handleMouseMove}
+        className={hasClick ? 'cursor-pointer' : ''}
       />
     );
   }
 
   return (
-    <div style={style} {...wrapperProps}>
+    <div
+      ref={setRef}
+      style={style}
+      onClick={hasClick ? handleClick : undefined}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+      onMouseMove={handleMouseMove}
+      className={hasClick ? 'cursor-pointer' : ''}
+    >
       {children.map(child => (
         <PrototypeShape
           key={child.id}
@@ -261,11 +285,17 @@ export default function PrototypePlayer() {
     for (const int of loadInts) {
       if (int.action === 'navigateTo' && int.targetFrameId) {
         const dur = int.duration || 300;
-        setTimeout(() => navigate(int.targetFrameId!, int.transition, dur, int.easing, frame.id), int.delay || 0);
+        const timer = setTimeout(() => navigate(int.targetFrameId!, int.transition, dur, int.easing, frame.id), int.delay || 0);
+        delayTimeouts.current.set(`load-${int.targetFrameId}`, timer);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+    return () => {
+      delayTimeouts.current.forEach(timer => clearTimeout(timer));
+      delayTimeouts.current.clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentFrameId]);
 
   const closeOverlay = useCallback((overlayId: string) => {
     setActiveOverlays(prev => prev.filter(o => o.id !== overlayId));
@@ -334,12 +364,12 @@ export default function PrototypePlayer() {
     setCanGoBack(historyStack.current.length > 0);
   }, []);
 
-  const handleOverlay = useCallback((targetFrameId: string, config: OverlayConfig, triggerElementId: string) => {
+  const handleOverlay = useCallback((targetFrameId: string, config: OverlayConfig, triggerElementId: string, triggerRect: DOMRect | null) => {
     const newOverlay: ActiveOverlay = {
       id: `overlay-${Date.now()}`,
       targetFrameId,
       triggerElementId,
-      triggerRect: { x: 0, y: 0, width: 0, height: 0 },
+      triggerRect: triggerRect ?? { x: 0, y: 0, width: 0, height: 0 },
       config,
     };
     setActiveOverlays(prev => [...prev, newOverlay]);

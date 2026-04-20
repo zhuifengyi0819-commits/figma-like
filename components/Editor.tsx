@@ -91,12 +91,14 @@ export default function Editor() {
     const extractedEdges: FlowEdgeType[] = [];
     for (const frame of topFrames) {
       const children = pageShapes.filter((s: Shape) => s.parentId === frame.id);
-      for (const child of children) {
+      for (let ci = 0; ci < children.length; ci++) {
+        const child = children[ci];
         if (child.interactions) {
-          for (const int of child.interactions) {
+          for (let ii = 0; ii < child.interactions.length; ii++) {
+            const int = child.interactions[ii];
             if (int.action === 'navigateTo' && int.targetFrameId) {
               extractedEdges.push({
-                id: `${child.id}-${int.targetFrameId}-${Math.random().toString(36).slice(2)}`,
+                id: `edge-${child.id}-${int.targetFrameId}-${ci}-${ii}`,
                 sourceNodeId: frame.id,
                 targetNodeId: int.targetFrameId,
                 trigger: int.trigger,
