@@ -1,7 +1,7 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape, Shadow, Gradient, Fill, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, TokenBindings, ConstraintAxis, OverlayConfig } from '@/lib/types';
+import { Shape, Shadow, Gradient, Fill, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, TokenBindings, ConstraintAxis, OverlayConfig, ComponentStateType } from '@/lib/types';
 import {
   ArrowUp, ArrowDown, Trash2, Copy, Move, Plus,
   AlignLeft, AlignCenterHorizontal, AlignRight,
@@ -145,6 +145,163 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+// Editor for component state overrides (hover/active/pressed/focused/disabled)
+function StateOverridesEditor({ shape }: { shape: Shape }) {
+  const { updateShape } = useEditorStore();
+  const overrides = shape.stateOverrides || {};
+
+  const STATE_OPTIONS: { key: 'hover' | 'active' | 'pressed' | 'focused' | 'disabled'; label: string; color: string }[] = [
+    { key: 'hover', label: '悬停 (Hover)', color: 'bg-blue-500' },
+    { key: 'active', label: '激活 (Active)', color: 'bg-green-500' },
+    { key: 'pressed', label: '按下 (Pressed)', color: 'bg-orange-500' },
+    { key: 'focused', label: '聚焦 (Focused)', color: 'bg-purple-500' },
+    { key: 'disabled', label: '禁用 (Disabled)', color: 'bg-gray-500' },
+  ];
+
+  const handleOverrideChange = (stateKey: string, property: string, value: unknown) => {
+    const newOverrides = {
+      ...overrides,
+      [stateKey]: {
+        ...(overrides[stateKey as keyof typeof overrides] || {}),
+        [property]: value,
+      },
+    };
+    updateShape(shape.id, { stateOverrides: newOverrides });
+  };
+
+  const handleRemoveOverride = (stateKey: string, property: string) => {
+    const stateObj = { ...(overrides[stateKey as keyof typeof overrides] || {}) };
+    delete (stateObj as Record<string, unknown>)[property];
+    const newOverrides = { ...overrides };
+    if (Object.keys(stateObj).length === 0) {
+      delete newOverrides[stateKey as keyof typeof newOverrides];
+    } else {
+      newOverrides[stateKey as keyof typeof newOverrides] = stateObj;
+    }
+    updateShape(shape.id, { stateOverrides: newOverrides });
+  };
+
+  return (
+    <Section title="状态覆盖">
+      <p className="text-[9px] text-[var(--text-tertiary)] mb-2">
+        为组件的各状态定义属性覆盖。在原型预览中，交互会自动触发状态切换。
+      </p>
+      {STATE_OPTIONS.map(({ key, label, color }) => {
+        const stateOverrides = overrides[key] || {};
+        const hasOverrides = Object.keys(stateOverrides).length > 0;
+        return (
+          <details key={key} className="mb-1 rounded border border-[var(--border)] overflow-hidden">
+            <summary className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-[var(--bg-elevated)] transition-colors ${hasOverrides ? 'bg-[var(--bg-elevated)]' : ''}`}>
+              <div className={`w-2 h-2 rounded-full ${color} opacity-70`} />
+              <span className="text-[11px] text-[var(--text-primary)] flex-1">{label}</span>
+              {hasOverrides && (
+                <span className="text-[9px] text-[var(--text-tertiary)]">
+                  {Object.keys(stateOverrides).length} 个覆盖
+                </span>
+              )}
+            </summary>
+            <div className="px-2 pb-2 space-y-1.5">
+              {/* Fill override */}
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-[var(--text-tertiary)] w-12">填充</span>
+                <div className="flex-1 flex items-center gap-1">
+                  <input
+                    type="color"
+                    value={stateOverrides.fill || '#000000'}
+                    onChange={e => handleOverrideChange(key, 'fill', e.target.value)}
+                    className="w-6 h-6 rounded border border-[var(--border)] cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={stateOverrides.fill || ''}
+                    onChange={e => handleOverrideChange(key, 'fill', e.target.value)}
+                    placeholder="无"
+                    className="flex-1 bg-[var(--bg-deep)] border border-[var(--border)] rounded px-1 py-0.5 text-[10px] text-[var(--text-primary)] outline-none font-mono"
+                  />
+                  {stateOverrides.fill && (
+                    <button onClick={() => handleRemoveOverride(key, 'fill')} className="text-[var(--text-tertiary)] hover:text-[var(--danger)]">
+                      <X size={10} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              {/* Opacity override */}
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-[var(--text-tertiary)] w-12">不透明度</span>
+                <input
+                  type="range" min={0} max={1} step={0.05}
+                  value={stateOverrides.opacity ?? 1}
+                  onChange={e => handleOverrideChange(key, 'opacity', parseFloat(e.target.value))}
+                  className="flex-1 accent-[var(--accent)]"
+                />
+                <span className="text-[10px] text-[var(--text-tertiary)] w-8 text-right font-mono">
+                  {Math.round((stateOverrides.opacity ?? 1) * 100)}%
+                </span>
+                {stateOverrides.opacity !== undefined && (
+                  <button onClick={() => handleRemoveOverride(key, 'opacity')} className="text-[var(--text-tertiary)] hover:text-[var(--danger)]">
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+              {/* ScaleX override */}
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-[var(--text-tertiary)] w-12">缩放 X</span>
+                <input
+                  type="number" min={0.1} max={3} step={0.05}
+                  value={stateOverrides.scaleX ?? 1}
+                  onChange={e => handleOverrideChange(key, 'scaleX', parseFloat(e.target.value))}
+                  className="flex-1 bg-[var(--bg-deep)] border border-[var(--border)] rounded px-1 py-0.5 text-[10px] text-[var(--text-primary)] outline-none font-mono"
+                />
+                {stateOverrides.scaleX !== undefined && (
+                  <button onClick={() => handleRemoveOverride(key, 'scaleX')} className="text-[var(--text-tertiary)] hover:text-[var(--danger)]">
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+              {/* ScaleY override */}
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-[var(--text-tertiary)] w-12">缩放 Y</span>
+                <input
+                  type="number" min={0.1} max={3} step={0.05}
+                  value={stateOverrides.scaleY ?? 1}
+                  onChange={e => handleOverrideChange(key, 'scaleY', parseFloat(e.target.value))}
+                  className="flex-1 bg-[var(--bg-deep)] border border-[var(--border)] rounded px-1 py-0.5 text-[10px] text-[var(--text-primary)] outline-none font-mono"
+                />
+                {stateOverrides.scaleY !== undefined && (
+                  <button onClick={() => handleRemoveOverride(key, 'scaleY')} className="text-[var(--text-tertiary)] hover:text-[var(--danger)]">
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+              {/* Text override */}
+              {(shape.type === 'text' || shape.type === 'frame') && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] text-[var(--text-tertiary)] w-12">文本</span>
+                  <input
+                    type="text"
+                    value={stateOverrides.text || ''}
+                    onChange={e => handleOverrideChange(key, 'text', e.target.value)}
+                    placeholder="无"
+                    className="flex-1 bg-[var(--bg-deep)] border border-[var(--border)] rounded px-1 py-0.5 text-[10px] text-[var(--text-primary)] outline-none"
+                  />
+                  {stateOverrides.text && (
+                    <button onClick={() => handleRemoveOverride(key, 'text')} className="text-[var(--text-tertiary)] hover:text-[var(--danger)]">
+                      <X size={10} />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </details>
+        );
+      })}
+      {Object.keys(overrides).length === 0 && (
+        <p className="text-[10px] text-[var(--text-tertiary)] italic">暂无状态覆盖</p>
+      )}
+    </Section>
+  );
+}
+
 function InteractionEditor({ shape }: { shape: Shape }) {
   const { addInteraction, removeInteraction, updateInteraction, pages } = useEditorStore();
   const interactions = shape.interactions || [];
@@ -183,6 +340,7 @@ function InteractionEditor({ shape }: { shape: Shape }) {
     { value: 'closeOverlay', label: '关闭 Overlay' },
     { value: 'swap', label: '交换画框' },
     { value: 'stateChange', label: '切换状态' },
+    { value: 'setVariable', label: '设置变量' },
     { value: 'none', label: '无' },
   ];
 
@@ -294,6 +452,73 @@ function InteractionEditor({ shape }: { shape: Shape }) {
                 <option value="">选择...</option>
                 {allFrames.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
+            </div>
+          )}
+          {/* stateChange action — select target state */}
+          {int.action === 'stateChange' && (
+            <div>
+              <label className="text-[9px] text-[var(--text-tertiary)]">目标状态</label>
+              <select
+                value={int.targetState || 'default'}
+                onChange={e => updateInteraction(shape.id, idx, { targetState: e.target.value as ComponentStateType })}
+                className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)]"
+              >
+                <option value="default">默认 (Default)</option>
+                <option value="hover">悬停 (Hover)</option>
+                <option value="active">激活 (Active)</option>
+                <option value="pressed">按下 (Pressed)</option>
+                <option value="focused">聚焦 (Focused)</option>
+                <option value="disabled">禁用 (Disabled)</option>
+              </select>
+            </div>
+          )}
+          {/* setVariable action — select variable and value */}
+          {int.action === 'setVariable' && (
+            <div className="space-y-1 p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border)]">
+              <div>
+                <label className="text-[9px] text-[var(--text-tertiary)]">变量</label>
+                <select
+                  value={int.variableId || ''}
+                  onChange={e => updateInteraction(shape.id, idx, { variableId: e.target.value })}
+                  className="w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)] outline-none"
+                >
+                  <option value="">选择变量...</option>
+                  {useEditorStore.getState().variables.map(v => (
+                    <option key={v.id} value={v.id}>{v.name} ({v.type})</option>
+                  ))}
+                </select>
+              </div>
+              {int.variableId && (() => {
+                const variable = useEditorStore.getState().variables.find(v => v.id === int.variableId);
+                if (!variable) return null;
+                if (variable.type === 'boolean') {
+                  return (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id={`bool-${idx}`}
+                        checked={int.variableValue === true || int.variableValue === 'true'}
+                        onChange={e => updateInteraction(shape.id, idx, { variableValue: e.target.checked })}
+                        className="accent-[var(--accent)]"
+                      />
+                      <label htmlFor={`bool-${idx}`} className="text-[9px] text-[var(--text-tertiary)]">设为 true</label>
+                    </div>
+                  );
+                }
+                return (
+                  <div>
+                    <label className="text-[9px] text-[var(--text-tertiary)]">值</label>
+                    <input
+                      type={variable.type === 'number' ? 'number' : 'text'}
+                      value={String(int.variableValue ?? variable.defaultValue ?? '')}
+                      onChange={e => updateInteraction(shape.id, idx, {
+                        variableValue: variable.type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value,
+                      })}
+                      className="w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text-primary)] outline-none font-mono"
+                    />
+                  </div>
+                );
+              })()}
             </div>
           )}
           {/* URL for openUrl */}
@@ -629,6 +854,11 @@ export default function PropertiesPanel() {
           <>
             {/* Component section */}
             <ComponentSection shape={single} />
+
+            {/* State overrides section — only for components/instances */}
+            {(single.type === 'component' || single.masterComponentId) && (
+              <StateOverridesEditor shape={single} />
+            )}
 
             {/* Position */}
             <Section title="位置与变换">

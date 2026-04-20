@@ -12,7 +12,7 @@ import {
   computeAutoLayoutChildren,
   getShapeCanvasPosition,
 } from '@/lib/layout';
-import { BlendMode, CANVAS_HEIGHT, CANVAS_WIDTH, Gradient, PenPoint, Shape, TokenBindings } from '@/lib/types';
+import { BlendMode, CANVAS_HEIGHT, CANVAS_WIDTH, Gradient, PenPoint, Shape, TokenBindings, ComponentStateType, ShapeStateOverrides } from '@/lib/types';
 import { useEditorStore } from '@/stores/useEditorStore';
 import {
   buildPenPoint,
@@ -48,6 +48,63 @@ function resolveTokenBindings(shape: Shape): {
     stroke: resolveTokenValue(bindings.stroke) ?? shape.stroke,
     opacity: bindings.opacity ? parseFloat(resolveTokenValue(bindings.opacity) ?? '1') : shape.opacity,
     cornerRadius: bindings.cornerRadius ? parseInt(resolveTokenValue(bindings.cornerRadius) ?? '0') : shape.cornerRadius ?? 0,
+  };
+}
+
+// Resolve shape properties with component state overrides applied
+function resolveWithState(
+  shape: Shape,
+  currentState: ComponentStateType | undefined,
+  stateOverrides: Shape['stateOverrides'],
+  baseTokens: { fill: string; stroke: string; opacity: number; cornerRadius: number }
+): {
+  fill: string;
+  stroke: string;
+  opacity: number;
+  cornerRadius: number;
+  scaleX: number;
+  scaleY: number;
+  text: string;
+  fontSize: number;
+} {
+  // No state or default state or no overrides → return base
+  if (!currentState || currentState === 'default' || !stateOverrides) {
+    return {
+      fill: baseTokens.fill,
+      stroke: baseTokens.stroke,
+      opacity: baseTokens.opacity,
+      cornerRadius: baseTokens.cornerRadius,
+      scaleX: shape.scaleX ?? 1,
+      scaleY: shape.scaleY ?? 1,
+      text: shape.text ?? 'Text',
+      fontSize: shape.fontSize ?? 24,
+    };
+  }
+
+  const overrideKey = currentState as 'hover' | 'active' | 'pressed' | 'focused' | 'disabled';
+  const override = stateOverrides[overrideKey];
+  if (!override) {
+    return {
+      fill: baseTokens.fill,
+      stroke: baseTokens.stroke,
+      opacity: baseTokens.opacity,
+      cornerRadius: baseTokens.cornerRadius,
+      scaleX: shape.scaleX ?? 1,
+      scaleY: shape.scaleY ?? 1,
+      text: shape.text ?? 'Text',
+      fontSize: shape.fontSize ?? 24,
+    };
+  }
+
+  return {
+    fill: override.fill ?? baseTokens.fill,
+    stroke: override.stroke ?? baseTokens.stroke,
+    opacity: override.opacity ?? baseTokens.opacity,
+    cornerRadius: override.cornerRadius ?? baseTokens.cornerRadius,
+    scaleX: override.scaleX ?? shape.scaleX ?? 1,
+    scaleY: override.scaleY ?? shape.scaleY ?? 1,
+    text: override.text ?? shape.text ?? 'Text',
+    fontSize: override.fontSize ?? shape.fontSize ?? 24,
   };
 }
 
@@ -179,18 +236,33 @@ function ShapeRenderer({
 
   const resolvedTokens = useMemo(() => resolveTokenBindings(shape), [shape]);
 
+  // Get active state from store and resolve with state overrides
+  const activeState = useEditorStore(s => s.activeStates[shape.id]);
+  const resolvedWithState = useMemo(
+    () => resolveWithState(shape, activeState, shape.stateOverrides, resolvedTokens),
+    [shape, activeState, shape.stateOverrides, resolvedTokens]
+  );
+
   const commonProps: Record<string, unknown> = {
     ...effectProps,
     id: shape.id,
     ref: shapeRef as React.RefObject<never>,
     x: shape.x, y: shape.y,
     rotation: shape.rotation,
-    opacity: resolvedTokens.opacity,
+    opacity: resolvedWithState.opacity,
     visible: shape.visible,
     draggable: !shape.locked,
-    scaleX: shape.scaleX ?? 1,
-    scaleY: shape.scaleY ?? 1,
+    scaleX: resolvedWithState.scaleX,
+    scaleY: resolvedWithState.scaleY,
     onClick: (e: Konva.KonvaEventObject<MouseEvent>) => { e.cancelBubble = true; onSelect(shape.id, e.evt.shiftKey); },
+    onMouseEnter: () => {
+      const { setShapeState } = useEditorStore.getState();
+      if (shape.stateOverrides?.hover) setShapeState(shape.id, 'hover');
+    },
+    onMouseLeave: () => {
+      const { setShapeState } = useEditorStore.getState();
+      if (shape.stateOverrides?.hover) setShapeState(shape.id, 'default');
+    },
     onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => {
       initPos.current = { x: shape.x, y: shape.y };
       // Alt+Drag duplicate: create a copy at same position and drag that instead
@@ -227,7 +299,7 @@ function ShapeRenderer({
   const blurR = shape.blur?.radius ?? 0;
   useKonvaBlurCache(shapeRef as React.RefObject<Konva.Node | null>, blurR, shape.id, shape.width, shape.height, shape.radius, shape.type, (shape.points || []).length, (shape.pathPoints || []).length);
 
-  const selStroke = isSelected ? '#D4A853' : resolvedTokens.stroke;
+  const selStroke = isSelected ? '#D4A853' : resolvedWithState.stroke;
   const selStrokeW = isSelected ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth;
   const gradFill = (w: number, h: number) => shape.gradient ? { fill: undefined, ...gradientToKonvaFill(shape.gradient, w, h) } : {};
 
@@ -235,20 +307,20 @@ function ShapeRenderer({
     case 'rect':
     case 'frame': {
       const w = shape.width || 100, h = shape.height || 100;
-      return <Rect {...commonProps} width={w} height={h} fill={shape.gradient ? undefined : resolvedTokens.fill} stroke={selStroke} strokeWidth={selStrokeW} cornerRadius={resolvedTokens.cornerRadius} dash={shape.strokeDash} {...gradFill(w, h)} />;
+      return <Rect {...commonProps} width={w} height={h} fill={shape.gradient ? undefined : resolvedWithState.fill} stroke={selStroke} strokeWidth={selStrokeW} cornerRadius={resolvedWithState.cornerRadius} dash={shape.strokeDash} {...gradFill(w, h)} />;
     }
     case 'circle': {
       const r = shape.radius || 50;
-      return <Circle {...commonProps} radius={r} fill={shape.gradient ? undefined : resolvedTokens.fill} stroke={selStroke} strokeWidth={selStrokeW} dash={shape.strokeDash} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
+      return <Circle {...commonProps} radius={r} fill={shape.gradient ? undefined : resolvedWithState.fill} stroke={selStroke} strokeWidth={selStrokeW} dash={shape.strokeDash} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
     }
     case 'text': {
       // Merge text style with shape properties (shape overrides style)
       const textStyle = (shape.textStyleId && useEditorStore.getState().textStyles.find(s => s.id === shape.textStyleId)) || null;
-      const effectiveFontSize = shape.fontSize ?? textStyle?.fontSize ?? 24;
+      const effectiveFontSize = resolvedWithState.fontSize;
       const effectiveFontFamily = shape.fontFamily ?? textStyle?.fontFamily ?? 'sans-serif';
       const effectiveFontWeight = shape.fontWeight ?? textStyle?.fontWeight ?? 'normal';
       const effectiveTextAlign = shape.textAlign ?? textStyle?.textAlign ?? 'left';
-      const effectiveFill = resolvedTokens.fill ?? textStyle?.fill ?? '#E8E4DF';
+      const effectiveFill = resolvedWithState.fill ?? textStyle?.fill ?? '#E8E4DF';
       const effectiveLineHeight = shape.lineHeight ?? textStyle?.lineHeight ?? 1.2;
       const effectiveLetterSpacing = shape.letterSpacing ?? textStyle?.letterSpacing ?? 0;
 
@@ -263,14 +335,13 @@ function ShapeRenderer({
         textWidth = shape.width;
         textHeight = undefined;
       } else {
-        // fixed — use fixed w/h, ellipsis if overflow
         ellipsis = true;
       }
       return (
         <Text
           {...commonProps}
           visible={shape.visible && editingTextId !== shape.id}
-          text={shape.text || 'Text'}
+          text={resolvedWithState.text}
           fontSize={effectiveFontSize}
           fontFamily={effectiveFontFamily}
           fontStyle={effectiveFontWeight as string}
@@ -286,16 +357,16 @@ function ShapeRenderer({
       );
     }
     case 'line':
-      return <Line {...commonProps} points={shape.points || [0, 0, 100, 100]} stroke={isSelected ? '#D4A853' : resolvedTokens.stroke} strokeWidth={isSelected ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth} lineCap="round" lineJoin="round" dash={shape.strokeDash} fill={undefined} />;
+      return <Line {...commonProps} points={shape.points || [0, 0, 100, 100]} stroke={isSelected ? '#D4A853' : resolvedWithState.stroke} strokeWidth={isSelected ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth} lineCap="round" lineJoin="round" dash={shape.strokeDash} fill={undefined} />;
     case 'arrow':
-      return <Arrow {...commonProps} points={shape.points || [0, 0, 150, 0]} stroke={isSelected ? '#D4A853' : resolvedTokens.stroke} strokeWidth={isSelected ? Math.max(shape.strokeWidth || 2, 2) : (shape.strokeWidth || 2)} fill={isSelected ? '#D4A853' : resolvedTokens.stroke} pointerLength={10} pointerWidth={10} lineCap="round" />;
+      return <Arrow {...commonProps} points={shape.points || [0, 0, 150, 0]} stroke={isSelected ? '#D4A853' : resolvedWithState.stroke} strokeWidth={isSelected ? Math.max(shape.strokeWidth || 2, 2) : (shape.strokeWidth || 2)} fill={isSelected ? '#D4A853' : resolvedWithState.stroke} pointerLength={10} pointerWidth={10} lineCap="round" />;
     case 'star': {
       const r = shape.radius || 50;
-      return <Star {...commonProps} numPoints={shape.numPoints || 5} innerRadius={shape.innerRadius || 20} outerRadius={r} fill={shape.gradient ? undefined : resolvedTokens.fill} stroke={selStroke} strokeWidth={selStrokeW} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
+      return <Star {...commonProps} numPoints={shape.numPoints || 5} innerRadius={shape.innerRadius || 20} outerRadius={r} fill={shape.gradient ? undefined : resolvedWithState.fill} stroke={selStroke} strokeWidth={selStrokeW} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
     }
     case 'triangle': {
       const r = shape.radius || 50;
-      return <RegularPolygon {...commonProps} sides={3} radius={r} fill={shape.gradient ? undefined : resolvedTokens.fill} stroke={selStroke} strokeWidth={selStrokeW} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
+      return <RegularPolygon {...commonProps} sides={3} radius={r} fill={shape.gradient ? undefined : resolvedWithState.fill} stroke={selStroke} strokeWidth={selStrokeW} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
     }
     case 'path': {
       // pathData is set by boolean operations; pathPointsToSvg is for manually drawn paths
