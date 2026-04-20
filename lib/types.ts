@@ -91,7 +91,8 @@ export type TriggerType =
 export type ActionType =
   | 'navigateTo' | 'back' | 'openUrl' | 'swap' | 'scrollTo'
   | 'setOverlay' | 'closeOverlay'
-  | 'stateChange' | 'none';
+  | 'stateChange' | 'setVariable'
+  | 'none';
 
 export type EasingType =
   | 'ease' | 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'
@@ -120,6 +121,11 @@ export interface Interaction {
   duration?: number;
   delay?: number;         // afterDelay 触发器的延迟(ms)
   overlay?: OverlayConfig;
+  // stateChange action 参数
+  targetState?: ComponentStateType;
+  // setVariable action 参数
+  variableId?: string;
+  variableValue?: string | number | boolean;
 }
 
 export type TransitionType =
@@ -217,12 +223,17 @@ export interface Shape {
   // Prototype interactions
   interactions?: Interaction[];
 
+  // Component state overrides (hover/active/pressed/focused/disabled)
+  stateOverrides?: ShapeStateOverrides;
+
+  // Current component state (runtime, set by prototype interactions)
+  componentState?: ComponentStateType;
+
   // Design token references (key = property name, value = token id)
   tokenRefs?: Record<string, string>;
 
   // Token bindings (key = property name, value = token id) — resolved at render time
   tokenBindings?: TokenBindings;
-
 
   // Text style reference (applied from global text styles)
   textStyleId?: string;
@@ -406,6 +417,57 @@ export interface Variable {
   name: string;
   type: 'string' | 'number' | 'boolean';
   defaultValue: string | number | boolean;
+}
+
+// Component states (Figma-style: default/hover/active/pressed/focused/disabled)
+export type ComponentStateType = 'default' | 'hover' | 'active' | 'pressed' | 'focused' | 'disabled';
+
+export interface StateOverride {
+  fill?: string;
+  stroke?: string;
+  opacity?: number;
+  fontSize?: number;
+  cornerRadius?: number;
+  scaleX?: number;
+  scaleY?: number;
+  text?: string;
+}
+
+// Shape-level state overrides (applied based on current component state)
+export interface ShapeStateOverrides {
+  hover?: Partial<Shape>;
+  active?: Partial<Shape>;
+  pressed?: Partial<Shape>;
+  focused?: Partial<Shape>;
+  disabled?: Partial<Shape>;
+}
+
+// Variable scope (page-level or global)
+export interface VariableScope {
+  id: string;
+  name: string;
+  isGlobal: boolean;
+  variableIds: string[];
+}
+
+// Current variable values (runtime state, persisted separately from definitions)
+export interface VariableValue {
+  variableId: string;
+  value: string | number | boolean;
+}
+
+// Condition for conditional prototype flows
+export interface Condition {
+  leftVar: string; // variable name or 'selectedOption' etc.
+  operator: '==' | '!=' | '>' | '<' | '>=' | '<=';
+  rightVal: string;
+}
+
+// Conditional prototype edge
+export interface ConditionalEdge {
+  edgeId: string;
+  conditions: Condition[];
+  logic: 'AND' | 'OR'; // all conditions must match, or any one
 }
 
 export interface ActiveOverlay {

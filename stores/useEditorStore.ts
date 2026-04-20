@@ -5,6 +5,7 @@ import {
   Shape, Page, ChatMessage, Material, ToolType, AutoLayout, ComponentDef, VariantDef,
   DesignToken, DesignTheme, Interaction, VersionSnapshot, TextStyle, TokenBindings,
   DEFAULT_SHAPE_PROPS, DEFAULT_AUTO_LAYOUT, PRESET_TOKENS,
+  Variable, VariableValue, ComponentStateType,
 } from '@/lib/types';
 import { unionAABBs } from '@/lib/measurement';
 import { computeBooleanPath, canDoBoolean } from '@/lib/boolean';
@@ -165,6 +166,22 @@ interface EditorState {
   restoreVersion: (versionId: string) => void;
   deleteVersion: (versionId: string) => void;
   clearVersionHistory: () => void;
+
+  // ==================== Variable System ====================
+  variables: Variable[];
+  variableValues: VariableValue[]; // runtime values (may differ from defaults)
+  addVariable: (name: string, type: 'string' | 'number' | 'boolean', defaultValue: string | number | boolean) => string;
+  updateVariable: (id: string, patch: Partial<Omit<Variable, 'id'>>) => void;
+  deleteVariable: (id: string) => void;
+  getVariableValue: (id: string) => string | number | boolean | undefined;
+  setVariableValue: (id: string, value: string | number | boolean) => void;
+  resetVariableToDefault: (id: string) => void;
+
+  // ==================== Component State ====================
+  activeStates: Record<string, ComponentStateType>; // shapeId -> state
+  setShapeState: (shapeId: string, state: ComponentStateType) => void;
+  resetShapeState: (shapeId: string) => void;
+  resetAllStates: () => void;
 }
 
 // === Helpers ===
@@ -341,6 +358,64 @@ export const useEditorStore = create<EditorState>()(
       prototypeMode: 'EDIT' as const,
       themes: [{ id: defaultThemeId, name: 'Default', tokens: [...PRESET_TOKENS] }],
       activeThemeId: defaultThemeId,
+
+      // ==================== Variable System ====================
+      variables: [],
+      variableValues: [],
+
+      addVariable: (name, type, defaultValue) => {
+        const id = uuid();
+        set(state => ({
+          variables: [...state.variables, { id, name, type, defaultValue }],
+          variableValues: [...state.variableValues, { variableId: id, value: defaultValue }],
+        }));
+        return id;
+      },
+      updateVariable: (id, patch) => {
+        set(state => ({
+          variables: state.variables.map(v => v.id === id ? { ...v, ...patch } : v),
+        }));
+      },
+      deleteVariable: (id) => {
+        set(state => ({
+          variables: state.variables.filter(v => v.id !== id),
+          variableValues: state.variableValues.filter(vv => vv.variableId !== id),
+        }));
+      },
+      getVariableValue: (id) => {
+        const vv = get().variableValues.find(v => v.variableId === id);
+        if (vv) return vv.value;
+        const v = get().variables.find(v => v.id === id);
+        return v?.defaultValue;
+      },
+      setVariableValue: (id, value) => {
+        set(state => {
+          const exists = state.variableValues.find(vv => vv.variableId === id);
+          if (exists) {
+            return { variableValues: state.variableValues.map(vv => vv.variableId === id ? { ...vv, value } : vv) };
+          }
+          return { variableValues: [...state.variableValues, { variableId: id, value }] };
+        });
+      },
+      resetVariableToDefault: (id) => {
+        const v = get().variables.find(v => v.id === id);
+        if (v) get().setVariableValue(id, v.defaultValue);
+      },
+
+      // ==================== Component State ====================
+      activeStates: {},
+
+      setShapeState: (shapeId, state) => {
+        set(s => ({ activeStates: { ...s.activeStates, [shapeId]: state } }));
+      },
+      resetShapeState: (shapeId) => {
+        set(s => {
+          const next = { ...s.activeStates };
+          delete next[shapeId];
+          return { activeStates: next };
+        });
+      },
+      resetAllStates: () => set({ activeStates: {} }),
 
       _setPageShapes: (shapes) => {
         set(state => {
