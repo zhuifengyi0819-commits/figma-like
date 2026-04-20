@@ -901,7 +901,7 @@ export default function Canvas({ width, height }: CanvasProps) {
             draggingAnchorRef.current = null;
           }
         }
-        else { clearSelection(); setActiveTool('select'); setEditingTextId(null); }
+        else { clearSelection(); setActiveTool('select'); setEditingTextId(null); store.exitGroupEditing(); }
       }
       else if (e.key === 'Enter' && editingPathId) {
         // Finish path editing
@@ -1567,12 +1567,17 @@ export default function Canvas({ width, height }: CanvasProps) {
           if (!shapeId) return;
           const shape = shapes.find(s => s.id === shapeId);
           if (!shape) return;
+          // Double-click on frame/component → enter component editing
           if (shape.type === 'component' || shape.type === 'frame') {
             if (shape.masterComponentId) {
               enterComponentEditing(shape.masterComponentId);
             } else if (shape.isMainComponent) {
               enterComponentEditing(shape.id);
             }
+          }
+          // Double-click on group → enter group editing context
+          if (shape.type === 'group') {
+            store.enterGroupEditing(shape.id);
           }
         }}
         onWheel={handleWheel}

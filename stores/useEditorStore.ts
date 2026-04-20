@@ -134,6 +134,10 @@ interface EditorState {
   enterComponentEditing: (componentId: string) => void;
   exitComponentEditing: () => void;
 
+  editingGroupId: string | null;
+  enterGroupEditing: (groupId: string) => void;
+  exitGroupEditing: () => void;
+
   prototypeMode: 'EDIT' | 'FLOW' | 'PREVIEW';
   setPrototypeMode: (mode: 'EDIT' | 'FLOW' | 'PREVIEW') => void;
   addInteraction: (shapeId: string, interaction: Interaction) => void;
@@ -355,6 +359,16 @@ export const useEditorStore = create<EditorState>()(
       showDevicePreview: false,
       components: [],
       editingComponentId: null,
+      editingGroupId: null,
+      enterGroupEditing: (groupId) => {
+        const shapes = get().shapes;
+        const childIds = shapes.filter(s => s.parentId === groupId).map(s => s.id);
+        set({ editingGroupId: groupId, selectedIds: childIds });
+      },
+      exitGroupEditing: () => {
+        set({ editingGroupId: null });
+      },
+
       prototypeMode: 'EDIT' as const,
       themes: [{ id: defaultThemeId, name: 'Default', tokens: [...PRESET_TOKENS] }],
       activeThemeId: defaultThemeId,
