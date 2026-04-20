@@ -25,6 +25,8 @@ export interface EditorEngineEvents {
   onSmartGuides?: (paths: { path: string; color: string }[]) => void;
   /** Called when selection bounds overlay should update */
   onSelectionBounds?: (bounds: { x: number; y: number; width: number; height: number } | null) => void;
+  /** Called when shapes have changed (after undo/redo/executeCommand) so UI can re-render */
+  onShapesChange?: () => void;
 }
 
 export class EditorEngine {
@@ -357,14 +359,22 @@ export class EditorEngine {
     this.events.onSmartGuides?.([]);
   }
 
-  // ============================================================
-  // History API (delegates to HistoryManager)
-  // ============================================================
+// ============================================================
+// History API (delegates to HistoryManager)
+// ============================================================
+
+  /** Execute a command and sync SceneGraph changes back to store */
+  executeCommand(cmd: import('@/lib/history/HistoryManager').Command): void {
+    this.history.execute(cmd);
+    // Notify that shapes may have changed (for UI refresh)
+    this.events.onShapesChange?.();
+  }
 
   undo(): void {
     const cmd = this.history.undo();
     if (cmd) {
       this.events.onSelectionChange?.(this.getState().selectedIds);
+      this.events.onShapesChange?.();
     }
   }
 
@@ -372,11 +382,17 @@ export class EditorEngine {
     const cmd = this.history.redo();
     if (cmd) {
       this.events.onSelectionChange?.(this.getState().selectedIds);
+      this.events.onShapesChange?.();
     }
   }
 
   canUndo(): boolean { return this.history.canUndo(); }
   canRedo(): boolean { return this.history.canRedo(); }
+
+  /** Expose the history manager for direct command creation */
+  getHistoryManager(): HistoryManager {
+    return this.history;
+  }
 
   // ============================================================
   // Layer Order

@@ -5,6 +5,7 @@
 import { useEffect } from 'react';
 import { useEditorStore } from '@/stores/useEditorStore';
 import { KeyboardManager } from '@/lib/keyboard/KeyboardManager';
+import { getEditorEngine } from '@/hooks/useEditor';
 
 let keyboardManager: KeyboardManager | null = null;
 
@@ -31,9 +32,9 @@ export function useKeyboardShortcuts() {
       km.on(action as any, () => store.setActiveTool(tool as any));
     }
 
-    // Edit shortcuts
-    km.on('undo', () => { store.pushHistory?.(); store.undo(); });
-    km.on('redo', () => { store.pushHistory?.(); store.redo(); });
+    // Edit shortcuts — use HistoryManager via engine (Command Pattern)
+    km.on('undo', () => { const engine = getEditorEngine(); engine?.undo(); });
+    km.on('redo', () => { const engine = getEditorEngine(); engine?.redo(); });
     km.on('duplicate', () => { if (store.selectedIds.length > 0) store.duplicateShapes(store.selectedIds); });
     km.on('delete', () => { if (store.selectedIds.length > 0) store.deleteShapes(store.selectedIds); });
     km.on('copy', () => store.copyStyle());

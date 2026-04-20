@@ -6,7 +6,7 @@ import { useRef, useEffect } from 'react';
 import { useEditorStore } from '@/stores/useEditorStore';
 import { SceneGraph } from '@/lib/scene-graph';
 import { EditorEngine } from '@/lib/editor/EditorEngine';
-import { syncShapesToSceneGraph } from '@/lib/editor/ShapeConverter';
+import { syncShapesToSceneGraph, applySGNodeToShape } from '@/lib/editor/ShapeConverter';
 
 let engineInstance: EditorEngine | null = null;
 let sceneGraphInstance: SceneGraph | null = null;
@@ -38,6 +38,23 @@ export function useEditor() {
         if (patch.canvasZoom !== undefined) store.setCanvasZoom(patch.canvasZoom);
       },
     });
+
+    // Wire up onShapesChange to sync SceneGraph → store after undo/redo/executeCommand
+    engineInstance.setEvents({
+      onShapesChange: () => {
+        if (!sceneGraphInstance) return;
+        const page = sceneGraphInstance.getCurrentPage();
+        if (!page) return;
+        const descendants = sceneGraphInstance.getDescendants(page.id);
+        const currentShapes = store.shapes;
+        // Apply each SGNode change back to the corresponding shape in the store
+        for (const node of descendants) {
+          applySGNodeToShape(node, currentShapes as any);
+        }
+        // Trigger store update with the mutated shapes array
+        store._setPageShapes([...currentShapes]);
+      },
+    });
   }
 
   // Initial sync from store shapes to SceneGraph (on mount / first render)
@@ -57,4 +74,12 @@ export function syncEditorFromStore(): void {
   if (sceneGraphInstance) {
     syncShapesToSceneGraph(useEditorStore.getState().shapes, sceneGraphInstance);
   }
+}
+
+export function getSceneGraphInstance(): SceneGraph | null {
+  return sceneGraphInstance;
+}
+
+export function getEditorEngine(): EditorEngine | null {
+  return engineInstance;
 }

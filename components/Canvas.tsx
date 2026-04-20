@@ -30,6 +30,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Arrow, Circle, Group, Image as KonvaImage, Layer, Line, Path, Rect, RegularPolygon, Stage, Star, Text, Transformer } from 'react-konva';
 import { ArrowLeft } from 'lucide-react';
 import { SelectionOverlay } from '@/components/SelectionOverlay';
+import { SnapEngine } from '@/lib/snap/SnapEngine';
+import { getSceneGraphInstance, getEditorEngine, syncEditorFromStore } from '@/hooks/useEditor';
 
 interface CanvasProps { width: number; height: number; }
 
@@ -699,6 +701,17 @@ export default function Canvas({ width, height }: CanvasProps) {
   const shiftRotationSnapRef = useRef(false);
   const [spacePressed, setSpacePressed] = useState(false);
 
+  // SnapEngine instance (initialized once)
+  const snapEngineRef = useRef<SnapEngine | null>(null);
+  useLayoutEffect(() => {
+    if (!snapEngineRef.current) {
+      const sg = getSceneGraphInstance();
+      if (sg) {
+        snapEngineRef.current = new SnapEngine(sg, { threshold: 6, enabled: true, snapToNodes: true, snapToCanvas: true, snapToGrid: false });
+      }
+    }
+  }, []);
+
   const editingComponent = editingComponentId ? shapes.find(s => s.id === editingComponentId) : null;
 
   const [isDrawing, setIsDrawing] = useState(false);
@@ -1094,8 +1107,7 @@ export default function Canvas({ width, height }: CanvasProps) {
       }
     }
 
-    const SNAP_THRESHOLD = 6;
-    const draggedBounds = getShapeBoundsForSnap({ ...shape, x: shape.x + dx, y: shape.y + dy });
+    // Compute snap using SnapEngine
     const guides: { x?: number; y?: number }[] = [];
     // Exclude shapes that will move with the dragged shape (groupId, frame children, z-order above)
     const parentId = shape.parentId ?? undefined;
@@ -1103,20 +1115,19 @@ export default function Canvas({ width, height }: CanvasProps) {
     const sibIdx = siblings.findIndex(s => s.id === id);
     const shapesAbove = siblings.slice(sibIdx + 1).map(s => s.id);
     const movingIds = new Set([id, ...shapesAbove, ...(shape.groupId ? currentShapes.filter(s => s.groupId === shape.groupId).map(s => s.id) : []), ...(shape.type === 'frame' || shape.type === 'group' ? currentShapes.filter(s => s.parentId === id).map(s => s.id) : [])]);
-    const others = currentShapes.filter(s => !movingIds.has(s.id));
+    const otherIds = currentShapes.filter(s => !movingIds.has(s.id)).map(s => s.id);
 
-    for (const other of others) {
-      const ob = getShapeBoundsForSnap(other);
-      if (Math.abs(draggedBounds.left - ob.left) < SNAP_THRESHOLD) guides.push({ x: ob.left });
-      if (Math.abs(draggedBounds.right - ob.right) < SNAP_THRESHOLD) guides.push({ x: ob.right });
-      if (Math.abs(draggedBounds.cx - ob.cx) < SNAP_THRESHOLD) guides.push({ x: ob.cx });
-      if (Math.abs(draggedBounds.left - ob.right) < SNAP_THRESHOLD) guides.push({ x: ob.right });
-      if (Math.abs(draggedBounds.right - ob.left) < SNAP_THRESHOLD) guides.push({ x: ob.left });
-      if (Math.abs(draggedBounds.top - ob.top) < SNAP_THRESHOLD) guides.push({ y: ob.top });
-      if (Math.abs(draggedBounds.bottom - ob.bottom) < SNAP_THRESHOLD) guides.push({ y: ob.bottom });
-      if (Math.abs(draggedBounds.cy - ob.cy) < SNAP_THRESHOLD) guides.push({ y: ob.cy });
-      if (Math.abs(draggedBounds.top - ob.bottom) < SNAP_THRESHOLD) guides.push({ y: ob.bottom });
-      if (Math.abs(draggedBounds.bottom - ob.top) < SNAP_THRESHOLD) guides.push({ y: ob.top });
+    if (snapEngineRef.current) {
+      // Sync scene graph from current store shapes before snapping
+      syncEditorFromStore();
+      const snapped = snapEngineRef.current.snap(
+        shape.x + dx, shape.y + dy,
+        { nodeIds: otherIds, excludeIds: [id] },
+        shape.width || 100, shape.height || 100, 'both'
+      );
+      // Convert SnapEngine output (verticalLines/horizontalLines) to {x?, y?}[] for setSnapLines
+      for (const line of snapped.verticalLines) guides.push({ x: line.position });
+      for (const line of snapped.horizontalLines) guides.push({ y: line.position });
     }
     setSnapLines(guides.slice(0, 6));
   }, []);
@@ -1125,55 +1136,44 @@ export default function Canvas({ width, height }: CanvasProps) {
     setSnapLines([]);
     const currentShapes = useEditorStore.getState().shapes;
     const shape = currentShapes.find(s => s.id === id);
-    pushHistory();
+    if (!shape) return;
 
     // Collect all shapes that will move: z-order group + groupId + frame children
-    const parentId = shape?.parentId ?? undefined;
+    const parentId = shape.parentId ?? undefined;
     const siblings = currentShapes.filter(s => (s.parentId ?? undefined) === parentId);
     const sibIdx = siblings.findIndex(s => s.id === id);
     const shapesAbove = siblings.slice(sibIdx + 1).map(s => s.id);
-    const groupMemberIds = shape?.groupId ? currentShapes.filter(s => s.groupId === shape.groupId).map(s => s.id) : [];
-    const childIds = (shape?.type === 'frame' || shape?.type === 'group')
+    const groupMemberIds = shape.groupId ? currentShapes.filter(s => s.groupId === shape.groupId).map(s => s.id) : [];
+    const childIds = (shape.type === 'frame' || shape.type === 'group')
       ? currentShapes.filter(s => s.parentId === id).map(s => s.id) : [];
-    const allMovingIds = new Set([id, ...shapesAbove, ...groupMemberIds, ...childIds]);
+    const allMovingIds = [id, ...shapesAbove, ...groupMemberIds, ...childIds];
 
-    if (shape?.groupId) {
-      // groupId: move all members including shapes above
-      const dx = x - (shape.x ?? 0), dy = y - (shape.y ?? 0);
-      allMovingIds.forEach(sid => {
-        const s = currentShapes.find(s => s.id === sid);
-        if (s) updateShape(sid, { x: s.x + dx, y: s.y + dy });
-      });
-    } else if (shape?.type === 'frame' || shape?.type === 'group') {
-      const dx = x - shape.x, dy = y - shape.y;
-      const updates = new Map<string, Partial<Shape>>();
-      updates.set(id, { x, y });
-      childIds.forEach(cid => {
-        const child = currentShapes.find(s => s.id === cid);
-        if (child) updates.set(cid, { x: child.x + dx, y: child.y + dy });
-      });
-      // Also move shapes above (same parent, later in array)
-      shapesAbove.forEach(aid => {
-        const s = currentShapes.find(s => s.id === aid);
-        if (s) updates.set(aid, { x: s.x + dx, y: s.y + dy });
-      });
-      updates.forEach((u, sid) => updateShape(sid, u));
+    const dx = x - shape.x, dy = y - shape.y;
+    if (dx === 0 && dy === 0) return;
+
+    // Use HistoryManager via engine's executeCommand (Command Pattern)
+    const engine = getEditorEngine();
+    if (engine) {
+      const cmd = engine.getHistoryManager().moveCommand(allMovingIds, dx, dy);
+      engine.executeCommand(cmd);
     } else {
-      // Move dragged shape + all shapes above it in sibling order
-      if (!shape) return;
-      const dx = x - shape.x, dy = y - shape.y;
+      // Fallback: direct store update (engine not yet initialized)
       allMovingIds.forEach(sid => {
         const s = currentShapes.find(s => s.id === sid);
         if (s) updateShape(sid, { x: s.x + dx, y: s.y + dy });
       });
     }
-  }, [updateShape, pushHistory]);
+  }, [updateShape]);
 
   const handleTransformEnd = useCallback((id: string, node: Konva.Node) => {
-    pushHistory();
     const scaleX = node.scaleX(), scaleY = node.scaleY();
-    const shape = useEditorStore.getState().shapes.find(s => s.id === id);
+    const currentShapes = useEditorStore.getState().shapes;
+    const shape = currentShapes.find(s => s.id === id);
     if (!shape) return;
+
+    // Capture before state for Command Pattern
+    const beforeState = { x: shape.x, y: shape.y, width: shape.width || 100, height: shape.height || 100, rotation: shape.rotation || 0 };
+
     const prevFlipX = (shape.scaleX ?? 1) < 0 ? -1 : 1;
     const prevFlipY = (shape.scaleY ?? 1) < 0 ? -1 : 1;
     const absX = Math.abs(scaleX), absY = Math.abs(scaleY);
@@ -1187,7 +1187,43 @@ export default function Canvas({ width, height }: CanvasProps) {
     }
     else if (shape.type === 'circle' || shape.type === 'star' || shape.type === 'triangle') { u.radius = Math.max(5, (shape.radius || 50) * Math.max(absX, absY)); if (shape.innerRadius) u.innerRadius = Math.max(5, shape.innerRadius * Math.max(absX, absY)); }
     else if (shape.type === 'text') { u.fontSize = Math.max(8, (shape.fontSize || 24) * absY); u.width = (shape.width || 200) * absX; }
-    updateShape(id, u);
+    // Snap resize using SnapEngine
+    if (snapEngineRef.current) {
+      syncEditorFromStore();
+      const snapped = snapEngineRef.current.snap(
+        node.x(), node.y(),
+        { nodeIds: useEditorStore.getState().shapes.filter(s => s.id !== id).map(s => s.id), excludeIds: [id] },
+        u.width || shape.width || 100, u.height || shape.height || 100, 'both'
+      );
+      node.x(snapped.finalX);
+      node.y(snapped.finalY);
+      u.x = snapped.finalX;
+      u.y = snapped.finalY;
+      const snapGuides: { x?: number; y?: number }[] = [];
+      for (const line of snapped.verticalLines) snapGuides.push({ x: line.position });
+      for (const line of snapped.horizontalLines) snapGuides.push({ y: line.position });
+      setSnapLines(snapGuides.slice(0, 6));
+    }
+
+    // Build after state
+    const afterState = {
+      x: u.x ?? shape.x,
+      y: u.y ?? shape.y,
+      width: u.width ?? shape.width ?? 100,
+      height: u.height ?? shape.height ?? 100,
+      rotation: u.rotation ?? shape.rotation ?? 0,
+    };
+
+    // Use HistoryManager via engine's executeCommand (Command Pattern)
+    const engine = getEditorEngine();
+    if (engine) {
+      const cmd = engine.getHistoryManager().transformCommand(id, beforeState, afterState);
+      engine.executeCommand(cmd);
+    } else {
+      // Fallback: direct store update (engine not yet initialized)
+      updateShape(id, u);
+    }
+    setSnapLines([]);
     // Apply constraints for frame/group children
     if (shape.type === 'frame' || shape.type === 'group') {
       const oldW = shape.width || 100, oldH = shape.height || 100;
@@ -1196,7 +1232,7 @@ export default function Canvas({ width, height }: CanvasProps) {
         setTimeout(() => applyConstraints(id, oldW, oldH, newW, newH), 0);
       }
     }
-  }, [updateShape, pushHistory, applyConstraints]);
+  }, [updateShape, applyConstraints]);
 
   const handleStageClick = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     if (e.target !== e.target.getStage()) return;
