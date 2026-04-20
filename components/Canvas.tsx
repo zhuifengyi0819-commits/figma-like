@@ -10,6 +10,7 @@ import {
 import {
   computeChildLayout,
   computeAutoLayoutChildren,
+  getShapeCanvasPosition,
 } from '@/lib/layout';
 import { BlendMode, CANVAS_HEIGHT, CANVAS_WIDTH, Gradient, PenPoint, Shape, TokenBindings } from '@/lib/types';
 import { useEditorStore } from '@/stores/useEditorStore';
@@ -650,19 +651,19 @@ export default function Canvas({ width, height }: CanvasProps) {
       setTextEditRotation(0);
       return;
     }
-    // Find the Konva node for the text shape to get its true absolute position
+    // Find the Konva node to get its true absolute position (accounts for parent transforms)
     const node = stageRef.current.findOne('#' + editingTextId);
     if (node) {
       setTextEditPosition(node.getAbsolutePosition());
-      // Also update rotation to account for parent transforms
       setTextEditRotation(node.getAbsoluteRotation());
     } else {
-      // Fallback: use shape data from store (may be wrong for nested shapes)
+      // Fallback: compute canvas-space position by traversing parent chain
       const shape = shapes.find(s => s.id === editingTextId);
       if (shape) {
+        const pos = getShapeCanvasPosition(shape, shapes);
         setTextEditPosition({
-          x: shape.x * canvasZoom + canvasPan.x,
-          y: shape.y * canvasZoom + canvasPan.y,
+          x: pos.x * canvasZoom + canvasPan.x,
+          y: pos.y * canvasZoom + canvasPan.y,
         });
         setTextEditRotation(shape.rotation || 0);
       }
