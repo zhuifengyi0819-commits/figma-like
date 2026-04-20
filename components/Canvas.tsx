@@ -13,6 +13,7 @@ import {
   getShapeCanvasPosition,
 } from '@/lib/layout';
 import { BlendMode, CANVAS_HEIGHT, CANVAS_WIDTH, Gradient, PenPoint, Shape, TokenBindings, ComponentStateType, ShapeStateOverrides } from '@/lib/types';
+import { interpolateText } from '@/lib/variables';
 import { useEditorStore } from '@/stores/useEditorStore';
 import {
   buildPenPoint,
@@ -316,11 +317,14 @@ function ShapeRenderer({
     case 'text': {
       // Merge text style with shape properties (shape overrides style)
       const textStyle = (shape.textStyleId && useEditorStore.getState().textStyles.find(s => s.id === shape.textStyleId)) || null;
+      const { variables, variableValues } = useEditorStore.getState();
       const effectiveFontSize = resolvedWithState.fontSize;
       const effectiveFontFamily = shape.fontFamily ?? textStyle?.fontFamily ?? 'sans-serif';
       const effectiveFontWeight = shape.fontWeight ?? textStyle?.fontWeight ?? 'normal';
       const effectiveTextAlign = shape.textAlign ?? textStyle?.textAlign ?? 'left';
       const effectiveFill = resolvedWithState.fill ?? textStyle?.fill ?? '#E8E4DF';
+      // Interpolate {{variableName}} tokens in text
+      const interpolatedText = interpolateText(resolvedWithState.text, variables, variableValues);
       const effectiveLineHeight = shape.lineHeight ?? textStyle?.lineHeight ?? 1.2;
       const effectiveLetterSpacing = shape.letterSpacing ?? textStyle?.letterSpacing ?? 0;
 
@@ -341,7 +345,7 @@ function ShapeRenderer({
         <Text
           {...commonProps}
           visible={shape.visible && editingTextId !== shape.id}
-          text={resolvedWithState.text}
+          text={interpolatedText}
           fontSize={effectiveFontSize}
           fontFamily={effectiveFontFamily}
           fontStyle={effectiveFontWeight as string}
