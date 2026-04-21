@@ -363,6 +363,7 @@ export class EditorEngine {
 
     this.activeTransform = null;
     this.activeSnapResult = null;
+    this._activeSmartGuides = [];
     this.events.onSmartGuides?.([]);
   }
 
