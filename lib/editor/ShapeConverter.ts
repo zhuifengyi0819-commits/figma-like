@@ -70,6 +70,7 @@ function sgFillsToShapeFill(fills?: Fill[]): string {
 
 interface BaseShapeProps {
   id: string;
+  parentId: string | null;
   name: string;
   x: number;
   y: number;
@@ -103,6 +104,7 @@ interface BaseShapeProps {
 function shapeToBaseProps(shape: Shape): BaseShapeProps {
   return {
     id: shape.id,
+    parentId: shape.parentId ?? null,
     name: shape.name,
     x: shape.x,
     y: shape.y,
@@ -186,7 +188,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'rectangle',
-        parentId: null,
         children: [],
         fills,
         strokes,
@@ -199,7 +200,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'ellipse',
-        parentId: null,
         children: [],
         fills,
         strokes,
@@ -211,7 +211,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'text',
-        parentId: null,
         children: [],
         text: shape.text ?? 'Text',
         fontSize: shape.fontSize ?? 16,
@@ -233,7 +232,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'line',
-        parentId: null,
         children: [],
         fills: [],
         strokes,
@@ -245,7 +243,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'star',
-        parentId: null,
         children: [],
         numPoints: shape.numPoints ?? 5,
         innerRadius: shape.innerRadius ?? 0.5,
@@ -259,7 +256,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'image',
-        parentId: null,
         children: [],
         src: shape.src ?? '',
         fills: [],
@@ -272,7 +268,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'frame',
-        parentId: null,
         children: [],
         backgroundColor: fill,
         cornerRadius: shape.cornerRadius ?? 0,
@@ -300,7 +295,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'group',
-        parentId: null,
         children: [],
         fills,
         strokes,
@@ -312,7 +306,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'pen',
-        parentId: null,
         children: [],
         points: (shape.pathPoints ?? []) as PenNode['points'],
         closed: shape.closePath ?? false,
@@ -327,7 +320,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'component',
-        parentId: null,
         children: [],
         description: shape.text ?? '',
         variantProperties: {},
@@ -342,7 +334,6 @@ export function shapeToSGNode(shape: Shape): SGNode {
       return {
         ...base,
         type: 'rectangle',
-        parentId: null,
         children: [],
         fills,
         strokes,
@@ -373,9 +364,31 @@ export function syncShapesToSceneGraph(shapes: Shape[], sceneGraph: SceneGraph):
 
   let added = 0;
 
-  for (const shape of shapes) {
+  // Topological sort: process shapes so that parents are added before children.
+  // This ensures the parent node exists in SceneGraph before we try to add a child.
+  const sorted = [...shapes].sort((a, b) => {
+    if (a.id === b.id) return 0;
+    // Put shapes with no parentId first (they go to page)
+    if (!a.parentId) return -1;
+    if (!b.parentId) return 1;
+    // If a is an ancestor of b, a should come first
+    let cur: Shape | undefined = b;
+    while (cur) {
+      if (cur.parentId === a.id) return -1;
+      cur = shapes.find(s => s.id === cur!.parentId);
+    }
+    // If b is an ancestor of a, b should come first
+    cur = a;
+    while (cur) {
+      if (cur.parentId === b.id) return 1;
+      cur = shapes.find(s => s.id === cur!.parentId);
+    }
+    return 0;
+  });
+
+  for (const shape of sorted) {
     if (sceneGraph.hasNode(shape.id)) {
-      // Node already exists — skip (caller can use syncNodeToShape for updates)
+      // Node already exists — skip (caller can use syncNodeToShape for forced updates)
       continue;
     }
 
