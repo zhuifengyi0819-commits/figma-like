@@ -331,16 +331,35 @@ export default function LayerPanel() {
     const isCollapsed = collapsed.has(node.shape.id);
     const isContainer = node.shape.type === 'frame' || node.shape.type === 'group' || node.shape.type === 'component';
 
+    // Helper to check if any ancestor is selected
+    const isAncestorSelected = (shapeId: string): boolean => {
+      const shape = shapes.find(s => s.id === shapeId);
+      if (!shape || !shape.parentId) return false;
+      if (selectedIds.includes(shape.parentId)) return true;
+      return isAncestorSelected(shape.parentId);
+    };
+
+    const isEffectivelySelected = selectedIds.includes(node.shape.id) || isAncestorSelected(node.shape.id);
+
     if (hasChildren || isContainer) {
       return (
         <div key={node.shape.id}>
           <div
-            className={`flex items-center gap-1 cursor-pointer hover:bg-[var(--bg-elevated)] transition-colors ${selectedIds.includes(node.shape.id) ? 'bg-[var(--bg-hover)] border-l-2 border-l-[var(--accent)]' : 'border-l-2 border-l-transparent'}`}
+            className={`group flex items-center gap-1 cursor-pointer hover:bg-[var(--bg-elevated)] transition-colors ${isEffectivelySelected ? 'bg-[var(--bg-hover)] border-l-2 border-l-[var(--accent)]' : 'border-l-2 border-l-transparent'}`}
             style={{ paddingLeft: 8 + depth * 16, paddingRight: 12, paddingTop: 4, paddingBottom: 4 }}
-            onClick={(e) => handleSelect(node.shape.id, e.shiftKey)}
+            onClick={(e) => {
+              // Check if click originated from chevron button (toggle collapse, don't select)
+              const target = e.target as HTMLElement;
+              if (target.closest('button[data-chevron]')) {
+                toggle(node.shape.id);
+                return;
+              }
+              handleSelect(node.shape.id, e.shiftKey);
+            }}
           >
             {isContainer ? (
               <button
+                data-chevron={node.shape.id}
                 onClick={(e) => { e.stopPropagation(); toggle(node.shape.id); }}
                 className="p-0.5 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
                 aria-label={isCollapsed ? '展开' : '折叠'}
@@ -361,6 +380,23 @@ export default function LayerPanel() {
               <span className="text-[9px] px-1 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] flex-shrink-0">
                 {node.shape.autoLayout.direction === 'horizontal' ? '→' : '↓'}
               </span>
+            )}
+            {/* Action buttons for container nodes */}
+            {isContainer && (
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                <button onClick={(e) => { e.stopPropagation(); useEditorStore.getState().updateShape(node.shape.id, { visible: !node.shape.visible }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={node.shape.visible ? '隐藏' : '显示'} aria-label={node.shape.visible ? '隐藏' : '显示'}>
+                  {node.shape.visible ? <Eye size={11} /> : <EyeOff size={11} />}
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); useEditorStore.getState().updateShape(node.shape.id, { locked: !node.shape.locked }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={node.shape.locked ? '解锁' : '锁定'} aria-label={node.shape.locked ? '解锁' : '锁定'}>
+                  {node.shape.locked ? <Lock size={11} /> : <Unlock size={11} />}
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); useEditorStore.getState().duplicateShapes([node.shape.id]); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title="复制" aria-label="复制">
+                  <Copy size={11} />
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); useEditorStore.getState().deleteShape(node.shape.id); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--danger)]" title="删除" aria-label="删除">
+                  <Trash2 size={11} />
+                </button>
+              </div>
             )}
           </div>
           {!isCollapsed && node.children.map(child => renderNode(child, depth + 1))}

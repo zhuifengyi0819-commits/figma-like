@@ -626,76 +626,205 @@ function InteractionEditor({ shape }: { shape: Shape }) {
   );
 }
 
+function ContainerSummary({ shape }: { shape: Shape }) {
+  const { shapes, setSelectedIds } = useEditorStore();
+
+  // Count direct children of this container
+  const directChildren = shapes.filter(s => s.parentId === shape.id);
+  const childCount = directChildren.length;
+
+  // Type breakdown
+  const typeBreakdown = directChildren.reduce<Record<string, number>>((acc, child) => {
+    acc[child.type] = (acc[child.type] || 0) + 1;
+    return acc;
+  }, {});
+
+  const typeLabels: Record<string, string> = {
+    rect: '矩形',
+    circle: '圆形',
+    text: '文字',
+    line: '线条',
+    arrow: '箭头',
+    image: '图片',
+    star: '星形',
+    triangle: '三角形',
+    frame: '画框',
+    group: '编组',
+    component: '组件',
+    path: '路径',
+  };
+
+  const typeIcons: Record<string, string> = {
+    rect: '▭',
+    circle: '◯',
+    text: 'T',
+    line: '╱',
+    arrow: '→',
+    image: '🖼',
+    star: '★',
+    triangle: '△',
+    frame: '□',
+    group: '⊞',
+    component: '◈',
+    path: '⌒',
+  };
+
+  if (childCount === 0) {
+    return (
+      <Section title="容器概览">
+        <div className="flex items-center justify-center py-3 px-2 rounded bg-[var(--bg-elevated)] border border-[var(--border)]">
+          <span className="text-[11px] text-[var(--text-tertiary)]">暂无子元素</span>
+        </div>
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="容器概览">
+      {/* Summary row */}
+      <div className="flex items-center gap-2 px-2 py-2 rounded bg-[var(--bg-elevated)] border border-[var(--border)]">
+        <div className="flex-1">
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-[14px] font-semibold text-[var(--text-primary)]">{childCount}</span>
+            <span className="text-[10px] text-[var(--text-tertiary)]">个子元素</span>
+          </div>
+        </div>
+        <button
+          onClick={() => setSelectedIds(directChildren.map(c => c.id))}
+          className="px-2 py-1 text-[10px] rounded bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors border border-[var(--accent)]/20"
+          title="选中所有子元素"
+        >
+          全选
+        </button>
+      </div>
+
+      {/* Type breakdown */}
+      <div className="space-y-1">
+        <span className="text-[9px] text-[var(--text-tertiary)] uppercase tracking-wider">类型分布</span>
+        <div className="grid grid-cols-2 gap-0.5">
+          {Object.entries(typeBreakdown).map(([type, count]) => (
+            <div key={type} className="flex items-center gap-1.5 px-2 py-1 rounded bg-[var(--bg-deep)]">
+              <span className="text-[10px] text-[var(--text-tertiary)] w-4 text-center">
+                {typeIcons[type] || '•'}
+              </span>
+              <span className="text-[10px] text-[var(--text-secondary)] flex-1 truncate">
+                {typeLabels[type] || type}
+              </span>
+              <span className="text-[10px] text-[var(--text-tertiary)] font-mono">×{count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 function ComponentSection({ shape }: { shape: Shape }) {
   const { components, createComponent, createInstance, syncInstances, detachInstance, selectedIds } = useEditorStore();
   const [compName, setCompName] = useState('');
 
   const comp = shape.masterComponentId ? components.find(c => c.id === shape.masterComponentId) : null;
+  const isMainComponent = shape.isMainComponent;
+  const isInstance = !!shape.masterComponentId && !shape.isMainComponent;
 
   return (
     <Section title="组件">
-      {shape.isMainComponent && comp && (
-        <div className="flex items-center gap-2 px-2 py-1.5 rounded bg-[var(--accent)]/10 border border-[var(--accent)]/20">
-          <Component size={13} className="text-[var(--accent)]" />
-          <span className="text-[11px] text-[var(--accent)] font-medium flex-1 truncate">{comp.name}</span>
+      {/* Main Component indicator */}
+      {isMainComponent && comp && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 px-2 py-2 rounded bg-[var(--accent)]/10 border border-[var(--accent)]/20">
+            <div className="w-8 h-8 rounded-lg bg-[var(--accent)]/20 flex items-center justify-center">
+              <Component size={16} className="text-[var(--accent)]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] uppercase tracking-wider text-[var(--accent)] font-semibold bg-[var(--accent)]/20 px-1.5 py-0.5 rounded">主组件</span>
+              </div>
+              <p className="text-[12px] text-[var(--accent)] font-medium truncate mt-0.5">{comp.name}</p>
+            </div>
+          </div>
           <button
             onClick={() => syncInstances(comp.id)}
-            className="text-[10px] text-[var(--accent)] hover:underline"
-            title="同步所有实例"
+            className="w-full py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-colors border border-[var(--border)] flex items-center justify-center gap-1.5"
+            title="同步所有实例到此主组件"
           >
-            同步
+            <Component size={12} /> 同步所有实例
           </button>
         </div>
       )}
-      {shape.masterComponentId && !shape.isMainComponent && comp && (
-        <div className="flex items-center gap-2 px-2 py-1.5 rounded bg-purple-500/10 border border-purple-500/20">
-          <Link size={13} className="text-purple-400" />
-          <span className="text-[11px] text-purple-400 flex-1 truncate">实例: {comp.name}</span>
-          <button
-            onClick={() => detachInstance(shape.id)}
-            className="p-0.5 text-purple-400 hover:text-purple-300"
-            title="分离实例"
-            aria-label="分离实例"
-          >
-            <Unlink size={12} />
-          </button>
+
+      {/* Instance indicator */}
+      {isInstance && comp && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 px-2 py-2 rounded bg-purple-500/10 border border-purple-500/20">
+            <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
+              <Link size={16} className="text-purple-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] uppercase tracking-wider text-purple-400 font-semibold bg-purple-500/20 px-1.5 py-0.5 rounded">实例</span>
+              </div>
+              <p className="text-[12px] text-purple-400 font-medium truncate mt-0.5">{comp.name}</p>
+            </div>
+          </div>
+          <div className="flex gap-1">
+            <button
+              onClick={() => detachInstance(shape.id)}
+              className="flex-1 py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-purple-400 hover:bg-purple-500/10 transition-colors border border-[var(--border)] flex items-center justify-center gap-1.5"
+              title="分离实例（断开与主组件的链接）"
+            >
+              <Unlink size={12} /> 分离实例
+            </button>
+          </div>
+          <p className="text-[9px] text-[var(--text-tertiary)] italic px-1">
+            分离后将作为独立图形，不再响应主组件更新
+          </p>
         </div>
       )}
-      {!shape.masterComponentId && (
-        <div className="flex items-center gap-1.5">
-          <input
-            value={compName}
-            onChange={e => setCompName(e.target.value)}
-            placeholder="组件名称"
-            className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-2 py-1 text-[10px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] min-w-0"
-          />
-          <button
-            onClick={() => {
-              if (!compName.trim()) return;
-              createComponent(selectedIds, compName.trim());
-              setCompName('');
-            }}
-            disabled={!compName.trim()}
-            className="px-2 py-1 rounded bg-[var(--accent)] text-white text-[10px] disabled:opacity-30 hover:opacity-90"
-            title="创建组件"
-          >
-            创建
-          </button>
+
+      {/* Create component UI */}
+      {!shape.masterComponentId && shape.type === 'frame' && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5">
+            <input
+              value={compName}
+              onChange={e => setCompName(e.target.value)}
+              placeholder="输入组件名称..."
+              className="flex-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-2 py-1.5 text-[10px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] min-w-0"
+            />
+            <button
+              onClick={() => {
+                if (!compName.trim()) return;
+                createComponent(selectedIds, compName.trim());
+                setCompName('');
+              }}
+              disabled={!compName.trim()}
+              className="px-3 py-1.5 rounded bg-[var(--accent)] text-white text-[10px] disabled:opacity-30 hover:opacity-90 transition-opacity flex items-center gap-1"
+              title="创建组件"
+            >
+              <Component size={11} /> 创建
+            </button>
+          </div>
         </div>
       )}
+
+      {/* Insert instance */}
       {components.length > 0 && !shape.masterComponentId && (
         <div className="space-y-1 pt-1">
-          <span className="text-[9px] text-[var(--text-tertiary)]">插入实例:</span>
-          {components.map(c => (
-            <button
-              key={c.id}
-              onClick={() => createInstance(c.id, shape.x + (shape.width || 100) + 20, shape.y)}
-              className="w-full text-left flex items-center gap-1.5 px-2 py-1 rounded text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] transition-colors"
-            >
-              <Component size={10} className="text-[var(--accent)]" />
-              {c.name}
-            </button>
-          ))}
+          <span className="text-[9px] text-[var(--text-tertiary)] uppercase tracking-wider">插入实例</span>
+          <div className="max-h-32 overflow-y-auto space-y-0.5">
+            {components.map(c => (
+              <button
+                key={c.id}
+                onClick={() => createInstance(c.id, shape.x + (shape.width || 100) + 20, shape.y)}
+                className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] transition-colors border border-transparent hover:border-[var(--border)]"
+              >
+                <Component size={11} className="text-[var(--accent)] flex-shrink-0" />
+                <span className="flex-1 truncate">{c.name}</span>
+                <span className="text-[9px] text-[var(--text-tertiary)]">+实例</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </Section>
@@ -854,6 +983,11 @@ export default function PropertiesPanel() {
           <>
             {/* Component section */}
             <ComponentSection shape={single} />
+
+            {/* Container summary — only for frames/groups */}
+            {isFrame && (
+              <ContainerSummary shape={single} />
+            )}
 
             {/* State overrides section — only for components/instances */}
             {(single.type === 'component' || single.masterComponentId) && (

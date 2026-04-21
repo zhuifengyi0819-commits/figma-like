@@ -28,7 +28,7 @@ import { shapesToSvg, downloadSvg } from '@/lib/svgExport';
 import Konva from 'konva';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Arrow, Circle, Group, Image as KonvaImage, Layer, Line, Path, Rect, RegularPolygon, Stage, Star, Text, Transformer } from 'react-konva';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Layers } from 'lucide-react';
 import { SelectionOverlay } from '@/components/SelectionOverlay';
 import { SnapEngine } from '@/lib/snap/SnapEngine';
 import { getSceneGraphInstance, getEditorEngine, syncEditorFromStore } from '@/hooks/useEditor';
@@ -2414,16 +2414,23 @@ export default function Canvas({ width, height }: CanvasProps) {
 
       {/* Component Editing Overlay — hidden while context menu is open */}
       {editingComponent && !contextMenu && (
-        <div className="absolute top-0 left-0 right-0 z-20 h-9 flex items-center gap-3 px-4 bg-[#1a1a1a]/95 backdrop-blur border-b border-[#333]">
+        <div className="absolute top-0 left-0 right-0 z-20 h-10 flex items-center gap-4 px-4 bg-[var(--accent)]/95 backdrop-blur-sm border-b border-[var(--accent)] shadow-lg">
           <button
             onClick={() => exitComponentEditing()}
-            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:text-white hover:bg-[#333] transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-white/90 hover:text-white hover:bg-white/20 transition-colors font-medium"
           >
-            <ArrowLeft size={13} />
-            返回
+            <ArrowLeft size={14} />
+            Exit
           </button>
-          <span className="text-xs text-[var(--text-primary)] font-medium">{editingComponent.name}</span>
-          <span className="text-[10px] text-[var(--accent)]">Editing component...</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-white/60">Editing:</span>
+            <span className="text-sm text-white font-semibold">{editingComponent.name}</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-white/15 rounded text-xs text-white/80">
+            <Layers size={12} />
+            <span>{shapes.filter(s => s.parentId === editingComponent.id).length} children</span>
+          </div>
+          <span className="text-[11px] text-white/50 ml-auto">Press Esc to exit editing</span>
         </div>
       )}
     </div>
