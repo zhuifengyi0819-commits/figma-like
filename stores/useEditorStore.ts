@@ -9,6 +9,7 @@ import {
 } from '@/lib/types';
 import { unionAABBs } from '@/lib/measurement';
 import { computeBooleanPath, canDoBoolean } from '@/lib/boolean';
+import { resolveAutoLayoutSize } from '@/lib/layout';
 
 const MAX_HISTORY = 50;
 
@@ -1014,11 +1015,21 @@ export const useEditorStore = create<EditorState>()(
         const frame = shapes.find(s => s.id === frameId);
         if (!frame || !frame.autoLayout) return;
         const children = shapes.filter(s => s.parentId === frameId);
+
+        // If hugging, compute frame size from children
+        const frameUpdates: Partial<Shape> = {};
+        if (frame.autoLayout.hugging) {
+          const sz = resolveAutoLayoutSize(frame, children, shapes);
+          frameUpdates.width = sz.width;
+          frameUpdates.height = sz.height;
+        }
+
         const updates = computeAutoLayout(frame, children);
-        if (updates.size === 0) return;
+        if (updates.size === 0 && Object.keys(frameUpdates).length === 0) return;
         set(state => {
           const ps = updatePageShapes(state.pages, state.activePageId, ss => ss.map(s => {
             const u = updates.get(s.id);
+            if (s.id === frameId) return { ...s, ...frameUpdates };
             return u ? { ...s, ...u } : s;
           }));
           return { pages: ps.pages, shapes: ps.shapes };

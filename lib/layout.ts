@@ -116,8 +116,8 @@ type AutoLayoutAlign = 'min' | 'center' | 'max' | 'stretch';
  * Otherwise computes from children.
 /**
  * Resolve the size of an auto-layout frame based on its children.
- * Since the AutoLayout interface has no explicit width/height,
- * all frames are effectively "Hug Contents".
+ * If the frame has explicit width/height AND hugging is false, returns those.
+ * If hugging is true, computes from children.
  */
 export function resolveAutoLayoutSize(
   frame: Shape,
@@ -130,6 +130,16 @@ export function resolveAutoLayoutSize(
 
   const sorted = [...children].sort((a, b) => children.indexOf(a) - children.indexOf(b));
 
+  // If frame has explicit dimensions and is NOT hugging, use them
+  const hasExplicitW = frame.width !== undefined;
+  const hasExplicitH = frame.height !== undefined;
+  const isHugging = al.hugging === true;
+
+  if (hasExplicitW && hasExplicitH && !isHugging) {
+    return { width: frame.width!, height: frame.height! };
+  }
+
+  // Hugging or missing explicit dimensions: compute from children
   if (al.direction === 'horizontal') {
     let cursorX = 0;
     let maxH = 0;
@@ -179,8 +189,10 @@ export function computeAutoLayoutChildren(
 
   if (children.length === 0) return results;
 
-  const fw = frame.width || 200;
-  const fh = frame.height || 200;
+  // Use resolveAutoLayoutSize to properly handle hugging frames
+  const computedSize = resolveAutoLayoutSize(frame, children, allShapes);
+  const fw = computedSize.width;
+  const fh = computedSize.height;
   const paddingLeft = al.paddingLeft;
   const paddingTop = al.paddingTop;
   const paddingRight = al.paddingRight;
@@ -215,20 +227,28 @@ export function computeAutoLayoutChildren(
       const child = sorted[i];
       const sz = childSizes[i];
       const isStretch = stretchCount > 0 && (child as Shape).autoLayout?.alignItems === 'stretch';
-      const actualW = isStretch ? sz.w + stretchW : sz.w;
+      let actualW = isStretch ? sz.w + stretchW : sz.w;
 
       // Counter-axis alignment (alignItems)
       const align = al.alignItems ?? 'start';
       let cy = paddingTop;
+      let actualH = sz.h;
       if (align === 'center') cy = paddingTop + (maxChildH - sz.h) / 2;
       else if (align === 'end') cy = paddingTop + (fh - paddingTop - paddingBottom) - sz.h;
-      else if (align === 'stretch') cy = paddingTop; // counter-axis stretch = full height
+      else if (align === 'stretch') { cy = paddingTop; actualH = fh - paddingTop - paddingBottom; }
+
+      // Frame Fill: child fills the parent's content area
+      if (child.frameFill) {
+        actualW = contentAreaW;
+        actualH = fh - paddingTop - paddingBottom;
+        cy = paddingTop;
+      }
 
       results.set(child.id, {
         x: cursorX,
         y: cy,
         width: actualW,
-        height: align === 'stretch' ? fh - paddingTop - paddingBottom : sz.h,
+        height: actualH,
       });
 
       cursorX += actualW + gap;
@@ -278,19 +298,27 @@ export function computeAutoLayoutChildren(
       const child = sorted[i];
       const sz = childSizes[i];
       const isStretch = stretchCount > 0 && (child as Shape).autoLayout?.alignItems === 'stretch';
-      const actualH = isStretch ? sz.h + stretchH : sz.h;
+      let actualH = isStretch ? sz.h + stretchH : sz.h;
+      let actualW = sz.w;
 
       // Counter-axis alignment
       const align = al.alignItems ?? 'start';
       let cx = paddingLeft;
       if (align === 'center') cx = paddingLeft + (maxChildW - sz.w) / 2;
       else if (align === 'end') cx = paddingLeft + (fw - paddingLeft - paddingRight) - sz.w;
-      else if (align === 'stretch') cx = paddingLeft; // counter-axis stretch = full width
+      else if (align === 'stretch') { cx = paddingLeft; actualW = fw - paddingLeft - paddingRight; }
+
+      // Frame Fill: child fills the parent's content area
+      if (child.frameFill) {
+        actualW = fw - paddingLeft - paddingRight;
+        actualH = contentAreaH;
+        cx = paddingLeft;
+      }
 
       results.set(child.id, {
         x: cx,
         y: cursorY,
-        width: align === 'stretch' ? fw - paddingLeft - paddingRight : sz.w,
+        width: actualW,
         height: actualH,
       });
 

@@ -269,6 +269,18 @@ function ShapeRenderer({
       const { setShapeState } = useEditorStore.getState();
       if (shape.stateOverrides?.hover) setShapeState(shape.id, 'default');
     },
+    onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>) => {
+      e.cancelBubble = true;
+      const { setShapeState } = useEditorStore.getState();
+      if (shape.stateOverrides?.pressed) setShapeState(shape.id, 'pressed');
+      if (shape.stateOverrides?.active) setShapeState(shape.id, 'active');
+    },
+    onMouseUp: (e: Konva.KonvaEventObject<MouseEvent>) => {
+      e.cancelBubble = true;
+      const { setShapeState } = useEditorStore.getState();
+      if (shape.stateOverrides?.pressed) setShapeState(shape.id, 'default');
+      if (shape.stateOverrides?.active) setShapeState(shape.id, 'default');
+    },
     onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => {
       initPos.current = { x: shape.x, y: shape.y };
       // Alt+Drag duplicate: create a copy via engine and drag that instead

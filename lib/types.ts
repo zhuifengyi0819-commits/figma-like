@@ -33,6 +33,7 @@ export interface AutoLayout {
   alignItems: 'start' | 'center' | 'end' | 'stretch';
   justifyContent: 'start' | 'center' | 'end' | 'space-between';
   wrap?: boolean; // Auto Layout wrap (Figma only supports horizontal direction for wrap)
+  hugging?: boolean; // Frame resizes to fit children (Hug Contents)
 }
 
 export interface PathPoint {
@@ -211,6 +212,9 @@ export interface Shape {
 
   // Constraints (children of frames)
   constraints?: Constraints;
+
+  // Frame Fill: child automatically fills parent content area
+  frameFill?: boolean;
 
   // Min/Max dimension constraints
   minWidth?: number;
