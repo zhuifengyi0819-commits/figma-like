@@ -35,7 +35,25 @@ export function useKeyboardShortcuts() {
     // Edit shortcuts — use HistoryManager via engine (Command Pattern)
     km.on('undo', () => { const engine = getEditorEngine(); engine?.undo(); });
     km.on('redo', () => { const engine = getEditorEngine(); engine?.redo(); });
-    km.on('duplicate', () => { if (store.selectedIds.length > 0) store.duplicateShapes(store.selectedIds); });
+    km.on('duplicate', () => {
+      if (store.selectedIds.length > 0) {
+        const engine = getEditorEngine();
+        if (engine) {
+          // Use engine.duplicateNode as the single creation point (undoable via HistoryManager)
+          const newIds: string[] = [];
+          for (const id of store.selectedIds) {
+            const shape = store.shapes.find(s => s.id === id);
+            if (!shape) continue;
+            // engine.duplicateNode handles addShape + SceneGraph sync + HistoryManager recording
+            const newId = engine.duplicateNode(id, shape.x + 10, shape.y + 10);
+            if (newId) newIds.push(newId);
+          }
+          if (newIds.length > 0) store.setSelectedIds(newIds);
+        } else {
+          store.duplicateShapes(store.selectedIds);
+        }
+      }
+    });
     km.on('delete', () => { if (store.selectedIds.length > 0) store.deleteShapes(store.selectedIds); });
     km.on('copy', () => store.copyStyle());
     km.on('paste', () => store.pasteStyle());
