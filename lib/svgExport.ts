@@ -41,60 +41,140 @@ function buildPathD(shape: Shape): string {
   return d;
 }
 
+/** Generate SVG path with per-corner radius.
+ *  cr can be number (all corners same) or [TL, TR, BR, BL].
+ *  Generates a path with rounded arcs at each corner. */
+function roundedRectPath(w: number, h: number, cr: number | [number, number, number, number]): string {
+  const [tl, tr, br, bl] = typeof cr === 'number'
+    ? [cr, cr, cr, cr]
+    : cr;
+  const r = (v: number) => Math.min(v, Math.min(w, h) / 2);
+  return [
+    `M ${r(tl)} 0`,
+    `L ${w - r(tr)} 0`,
+    `Q ${w} 0 ${w} ${r(tr)}`,
+    `L ${w} ${h - r(br)}`,
+    `Q ${w} ${h} ${w - r(br)} ${h}`,
+    `L ${r(bl)} ${h}`,
+    `Q 0 ${h} 0 ${h - r(bl)}`,
+    `L 0 ${r(tl)}`,
+    `Q 0 0 ${r(tl)} 0`,
+    'Z',
+  ].join(' ');
+}
+
+/** Resolve fill color for SVG from Fill object */
+function fillColor(f: { type?: string; color?: string; gradient?: Gradient }, defs: string[], idCounter: { n: number }): string {
+  if (f.type === 'solid' || !f.type) return f.color || '#000000';
+  if (f.type === 'linear' || f.type === 'radial') {
+    if (!f.gradient) return '#000000';
+    const gid = `grad-${idCounter.n++}`;
+    defs.push(gradientToSvgDefs(f.gradient, gid));
+    return `url(#${gid})`;
+  }
+  return f.color || '#000000';
+}
+
+/** Resolve stroke attrs from Stroke object */
+function strokeAttrs(s: { color?: string; width?: number; style?: string; opacity?: number }, defs: string[], idCounter: { n: number }): string {
+  const color = s.color === 'transparent' || !s.color ? 'none' : s.color;
+  const width = s.width ?? 1;
+  const dash = s.style === 'dashed' ? `stroke-dasharray="4 2"` : '';
+  const opacity = s.opacity !== undefined && s.opacity < 1 ? `stroke-opacity="${s.opacity}"` : '';
+  return `${color !== 'none' ? `stroke="${color}"` : 'stroke="none"'} stroke-width="${width}" ${dash} ${opacity}`.trim();
+}
+
 function shapeToSvgElement(shape: Shape, allShapes: Shape[], defs: string[], idCounter: { n: number }): string {
   if (!shape.visible) return '';
-  const attrs: string[] = [];
   const shadows = shape.shadows || (shape.shadow ? [shape.shadow] : []);
   let gradId = '';
-
-  if (shape.gradient) {
-    gradId = `grad-${idCounter.n++}`;
-    defs.push(gradientToSvgDefs(shape.gradient, gradId));
-  }
 
   if (shadows.length > 0) {
     const fid = `shadow-${idCounter.n++}`;
     defs.push(shadowToFilter(shadows, fid));
-    attrs.push(`filter="url(#${fid})"`);
   }
 
-  if (shape.opacity < 1) attrs.push(`opacity="${shape.opacity}"`);
+  const commonAttrs: string[] = [];
+  if (shape.opacity !== undefined && shape.opacity < 1) commonAttrs.push(`opacity="${shape.opacity}"`);
   const transform: string[] = [];
   if (shape.rotation) transform.push(`rotate(${shape.rotation})`);
   if (shape.scaleX === -1 || shape.scaleY === -1) {
     transform.push(`scale(${shape.scaleX ?? 1},${shape.scaleY ?? 1})`);
   }
-
-  const fill = shape.gradient ? `url(#${gradId})` : (shape.fill === 'transparent' ? 'none' : shape.fill);
-  const stroke = shape.stroke === 'transparent' ? 'none' : shape.stroke;
-  const sw = shape.strokeWidth;
-  const dash = shape.strokeDash ? `stroke-dasharray="${shape.strokeDash.join(' ')}"` : '';
+  const txStr = transform.length ? `transform="${transform.join(' ')}"` : '';
 
   switch (shape.type) {
     case 'rect':
     case 'frame': {
       const w = shape.width || 100, h = shape.height || 100;
-      const cr = shape.cornerRadius || 0;
-      const txStr = transform.length ? `transform="${transform.join(' ')}"` : '';
+      const cr = shape.cornerRadius ?? 0;
       const children = allShapes.filter(s => s.parentId === shape.id && s.visible);
-      if (children.length > 0) {
-        const clip = shape.clipContent !== false;
-        const clipId = clip ? `clip-${idCounter.n++}` : '';
-        if (clip) defs.push(`<clipPath id="${clipId}"><rect x="${shape.x}" y="${shape.y}" width="${w}" height="${h}" rx="${cr}" /></clipPath>`);
-        let inner = `<rect x="${shape.x}" y="${shape.y}" width="${w}" height="${h}" rx="${cr}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" ${dash} ${attrs.join(' ')} />`;
-        inner += children.map(c => shapeToSvgElement(c, allShapes, defs, idCounter)).join('');
-        return `<g ${txStr} ${clip ? `clip-path="url(#${clipId})"` : ''}>${inner}</g>`;
+
+      // Build multi-fill: each fill is a separate rect layered
+      const fills = shape.fills && shape.fills.length > 0
+        ? shape.fills.filter(f => f.visible !== false)
+        : [{ type: 'solid', color: shape.fill || '#3D3D45' }];
+
+      const strokes = shape.strokes && shape.strokes.length > 0
+        ? shape.strokes.filter(s => {
+            const c = s.color;
+            return c !== 'transparent' && c !== 'none';
+          })
+        : (shape.stroke && shape.stroke !== 'transparent'
+            ? [{ color: shape.stroke, width: shape.strokeWidth ?? 1, style: shape.strokeDash ? 'dashed' : 'solid', opacity: 1 }]
+            : []);
+
+      const clip = shape.clipContent !== false;
+      const clipId = clip ? `clip-${idCounter.n++}` : '';
+      if (clip && children.length > 0) {
+        const clipPathStr = roundedRectPath(w, h, cr);
+        defs.push(`<clipPath id="${clipId}"><path d="${clipPathStr}" /></clipPath>`);
       }
-      return `<rect x="${shape.x}" y="${shape.y}" width="${w}" height="${h}" rx="${cr}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" ${dash} ${attrs.join(' ')} ${txStr} />`;
+
+      // Build layered elements
+      const els: string[] = [];
+
+      // For single fill + stroke: use rect directly
+      if (fills.length === 1 && strokes.length <= 1) {
+        const fc = fillColor(fills[0], defs, idCounter);
+        const st = strokes[0] ? strokeAttrs(strokes[0], defs, idCounter) : 'stroke="none"';
+        const rx = typeof cr === 'number' ? ` rx="${cr}"` : '';
+        els.push(`<path d="${roundedRectPath(w, h, cr)}" fill="${fc}" ${st} ${commonAttrs.join(' ')} ${txStr} />`);
+      } else {
+        // Multi-fill/stroke: each fill + each stroke as separate rect
+        const rx = typeof cr === 'number' ? ` rx="${cr}"` : '';
+        for (let fi = 0; fi < fills.length; fi++) {
+          const f = fills[fi];
+          const fc = fillColor(f, defs, idCounter);
+          const st = strokes[fi] ? strokeAttrs(strokes[fi], defs, idCounter) : 'stroke="none"';
+          els.push(`<path d="${roundedRectPath(w, h, cr)}" fill="${fc}" ${st} ${commonAttrs.join(' ')} ${txStr} />`);
+        }
+        // Extra strokes beyond fill count
+        for (let si = fills.length; si < strokes.length; si++) {
+          const st = strokeAttrs(strokes[si], defs, idCounter);
+          els.push(`<path d="${roundedRectPath(w, h, cr)}" fill="none" ${st} ${commonAttrs.join(' ')} ${txStr} />`);
+        }
+      }
+
+      let inner = els.join('');
+      if (children.length > 0) {
+        inner += children.map(c => shapeToSvgElement(c, allShapes, defs, idCounter)).join('');
+      }
+
+      if (clip && children.length > 0) {
+        return `<g ${txStr} clip-path="url(#${clipId})">${inner}</g>`;
+      }
+      return inner;
     }
     case 'circle': {
       const r = shape.radius || 50;
-      const txStr = transform.length ? `transform="${transform.join(' ')}"` : '';
-      return `<circle cx="${shape.x}" cy="${shape.y}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" ${dash} ${attrs.join(' ')} ${txStr} />`;
+      const fill = shape.gradient ? (() => { const g = shape.gradient!; const gid = `grad-${idCounter.n++}`; defs.push(gradientToSvgDefs(g, gid)); return `url(#${gid})`; })() : (shape.fill === 'transparent' ? 'none' : shape.fill);
+      const stroke = shape.stroke === 'transparent' ? 'none' : shape.stroke;
+      const sw = shape.strokeWidth;
+      const dash = shape.strokeDash ? `stroke-dasharray="${shape.strokeDash.join(' ')}"` : '';
+      return `<circle cx="${shape.x}" cy="${shape.y}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" ${dash} ${commonAttrs.join(' ')} ${txStr} />`;
     }
     case 'text': {
-      const txParts = [...transform];
-      const txStr = txParts.length ? `transform="${txParts.join(' ')}"` : '';
       const style = [
         `font-size:${shape.fontSize || 24}px`,
         `font-family:${shape.fontFamily || 'sans-serif'}`,
@@ -103,17 +183,22 @@ function shapeToSvgElement(shape: Shape, allShapes: Shape[], defs: string[], idC
       ].filter(Boolean).join(';');
       const anchor = shape.textAlign === 'center' ? 'middle' : shape.textAlign === 'right' ? 'end' : 'start';
       const tx = shape.textAlign === 'center' ? (shape.width || 0) / 2 : shape.textAlign === 'right' ? (shape.width || 0) : 0;
-      return `<text x="${shape.x + tx}" y="${shape.y + (shape.fontSize || 24)}" fill="${shape.fill}" text-anchor="${anchor}" style="${style}" ${attrs.join(' ')} ${txStr}>${escapeXml(shape.text || '')}</text>`;
+      return `<text x="${shape.x + tx}" y="${shape.y + (shape.fontSize || 24)}" fill="${shape.fill}" text-anchor="${anchor}" style="${style}" ${commonAttrs.join(' ')} ${txStr}>${escapeXml(shape.text || '')}</text>`;
     }
     case 'line': {
       const pts = shape.points || [0, 0, 100, 100];
-      return `<line x1="${pts[0] + shape.x}" y1="${pts[1] + shape.y}" x2="${pts[2] + shape.x}" y2="${pts[3] + shape.y}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" ${dash} ${attrs.join(' ')} />`;
+      const stroke = shape.stroke === 'transparent' ? 'none' : shape.stroke;
+      const sw = shape.strokeWidth;
+      const dash = shape.strokeDash ? `stroke-dasharray="${shape.strokeDash.join(' ')}"` : '';
+      return `<line x1="${pts[0] + shape.x}" y1="${pts[1] + shape.y}" x2="${pts[2] + shape.x}" y2="${pts[3] + shape.y}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" ${dash} ${commonAttrs.join(' ')} />`;
     }
     case 'arrow': {
       const pts = shape.points || [0, 0, 150, 0];
+      const stroke = shape.stroke === 'transparent' ? 'none' : shape.stroke;
+      const sw = shape.strokeWidth;
       const markerId = `arrow-${idCounter.n++}`;
       defs.push(`<marker id="${markerId}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${stroke}" /></marker>`);
-      return `<line x1="${pts[0] + shape.x}" y1="${pts[1] + shape.y}" x2="${pts[2] + shape.x}" y2="${pts[3] + shape.y}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" marker-end="url(#${markerId})" ${attrs.join(' ')} />`;
+      return `<line x1="${pts[0] + shape.x}" y1="${pts[1] + shape.y}" x2="${pts[2] + shape.x}" y2="${pts[3] + shape.y}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" marker-end="url(#${markerId})" ${commonAttrs.join(' ')} />`;
     }
     case 'star': {
       const r = shape.radius || 50, ir = shape.innerRadius || 20, n = shape.numPoints || 5;
@@ -123,7 +208,9 @@ function shapeToSvgElement(shape: Shape, allShapes: Shape[], defs: string[], idC
         const rad = i % 2 === 0 ? r : ir;
         pts.push(`${shape.x + rad * Math.cos(angle)},${shape.y + rad * Math.sin(angle)}`);
       }
-      return `<polygon points="${pts.join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" ${attrs.join(' ')} />`;
+      const fill = shape.fill === 'transparent' ? 'none' : (shape.fill || '#000');
+      const stroke = shape.stroke === 'transparent' ? 'none' : shape.stroke;
+      return `<polygon points="${pts.join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${shape.strokeWidth || 1}" ${commonAttrs.join(' ')} />`;
     }
     case 'triangle': {
       const r = shape.radius || 50;
@@ -132,12 +219,16 @@ function shapeToSvgElement(shape: Shape, allShapes: Shape[], defs: string[], idC
         const angle = (2 * Math.PI / 3) * i - Math.PI / 2;
         pts.push(`${shape.x + r * Math.cos(angle)},${shape.y + r * Math.sin(angle)}`);
       }
-      return `<polygon points="${pts.join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" ${attrs.join(' ')} />`;
+      const fill = shape.fill === 'transparent' ? 'none' : (shape.fill || '#000');
+      const stroke = shape.stroke === 'transparent' ? 'none' : shape.stroke;
+      return `<polygon points="${pts.join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${shape.strokeWidth || 1}" ${commonAttrs.join(' ')} />`;
     }
     case 'path': {
       const d = buildPathD(shape);
       if (!d) return '';
-      return `<path d="${d}" fill="${fill === 'none' || shape.fill === 'transparent' ? 'none' : fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" ${attrs.join(' ')} />`;
+      const fill = shape.fill === 'transparent' || shape.fill === 'none' ? 'none' : (shape.fill || '#000');
+      const stroke = shape.stroke === 'transparent' ? 'none' : shape.stroke;
+      return `<path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${shape.strokeWidth || 1}" stroke-linecap="round" stroke-linejoin="round" ${commonAttrs.join(' ')} />`;
     }
     case 'image':
     case 'component': {
@@ -147,9 +238,9 @@ function shapeToSvgElement(shape: Shape, allShapes: Shape[], defs: string[], idC
       if (cr) {
         const clipId = `img-clip-${idCounter.n++}`;
         defs.push(`<clipPath id="${clipId}"><rect x="${shape.x}" y="${shape.y}" width="${w}" height="${h}" rx="${cr}" /></clipPath>`);
-        return `<image x="${shape.x}" y="${shape.y}" width="${w}" height="${h}" href="${shape.src}" clip-path="url(#${clipId})" ${attrs.join(' ')} />`;
+        return `<image x="${shape.x}" y="${shape.y}" width="${w}" height="${h}" href="${shape.src}" clip-path="url(#${clipId})" ${commonAttrs.join(' ')} />`;
       }
-      return `<image x="${shape.x}" y="${shape.y}" width="${w}" height="${h}" href="${shape.src}" ${attrs.join(' ')} />`;
+      return `<image x="${shape.x}" y="${shape.y}" width="${w}" height="${h}" href="${shape.src}" ${commonAttrs.join(' ')} />`;
     }
     default:
       return '';

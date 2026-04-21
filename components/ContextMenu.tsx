@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Lock, Unlock, ClipboardPaste, Grid3X3, LayoutGrid, Square, Circle, Type, Minus, Frame, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd, AlignJustify, Edit3, Plus, Minus as MinusIcon } from 'lucide-react';
+import { Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Lock, Unlock, ClipboardPaste, Grid3X3, LayoutGrid, Square, Circle, Type, Minus, Frame, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd, AlignJustify, Edit3, Plus, Minus as MinusIcon, Trash } from 'lucide-react';
 import BatchRenameModal from './BatchRenameModal';
 
 interface MenuItem {
@@ -39,6 +39,9 @@ export default function ContextMenu() {
     createComponent,
     addShape,
     addGuide,
+    guides,
+    deleteGuide,
+    clearGuides,
     canvasZoom,
     canvasPan,
     alignShapes,
@@ -169,6 +172,16 @@ export default function ContextMenu() {
     hideContextMenu();
   };
 
+  const handleDeleteGuide = (id: string) => {
+    deleteGuide(id);
+    hideContextMenu();
+  };
+
+  const handleClearAllGuides = () => {
+    clearGuides();
+    hideContextMenu();
+  };
+
   // Empty canvas: show create shape options
   // Has selection: show shape manipulation options
   const groups: MenuGroup[] = isEmptyCanvas
@@ -238,6 +251,24 @@ export default function ContextMenu() {
             { label: '水平分布', icon: <AlignJustify size={13} />, action: () => handleAlign('distributeH') },
             { label: '垂直分布', icon: <AlignJustify size={13} />, action: () => handleAlign('distributeV') },
           ],
+        },
+        // Guide management — always visible
+        {
+          items: [
+            { label: '添加垂直参考线', icon: <Plus size={13} />, action: handleAddVerticalGuide },
+            { label: '添加水平参考线', icon: <Plus size={13} />, action: handleAddHorizontalGuide },
+            ...(guides.length > 0
+              ? [{ label: '清除所有参考线', icon: <Trash size={13} />, danger: true, action: handleClearAllGuides }]
+              : []),
+          ],
+        },
+        // Show existing guides list when guides exist
+        guides.length > 0 && {
+          items: guides.map(g => ({
+            label: `删除 ${g.x !== undefined ? '垂直' : '水平'} 参考线 (${Math.round(g.x ?? g.y ?? 0)}px)`,
+            icon: <MinusIcon size={13} />,
+            action: () => handleDeleteGuide(g.id),
+          })),
         },
       ].filter(Boolean) as MenuGroup[];
 

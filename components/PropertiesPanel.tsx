@@ -3,14 +3,14 @@
 import { useEditorStore } from '@/stores/useEditorStore';
 import { Shape, Shadow, Gradient, Fill, Stroke, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, TokenBindings, ConstraintAxis, OverlayConfig, ComponentStateType } from '@/lib/types';
 import {
-  ArrowUp, ArrowDown, Trash2, Copy, Move, Plus,
+  ArrowUp, ArrowDown, Trash2, Copy, Move, Plus, Eye, EyeOff,
   AlignLeft, AlignCenterHorizontal, AlignRight,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
-  FlipHorizontal, FlipVertical,
   AlignHorizontalSpaceBetween, AlignVerticalSpaceBetween,
   ArrowRightLeft, ArrowUpDown, LayoutGrid,
   Component, Unlink, Zap, Link,
   Download, Combine, Minus, Layers, X,
+  FlipHorizontal, FlipVertical,
 } from 'lucide-react';
 import { useCallback, useRef, useState, useEffect } from 'react';
 import { canDoBoolean } from '@/lib/boolean';
@@ -1479,6 +1479,25 @@ export default function PropertiesPanel() {
                         <Trash2 size={11} />
                       </button>
                     )}
+                    {/* Visibility toggle for all fills */}
+                    <button
+                      onClick={() => {
+                        debouncedPushHistory();
+                        selectedIds.forEach(id => {
+                          const shape = shapes.find(s => s.id === id);
+                          if (!shape) return;
+                          const fills = [...(shape.fills || [])];
+                          if (!fills[i]) return;
+                          fills[i] = { ...fills[i], visible: !(fills[i].visible !== false) };
+                          updateShape(id, { fills });
+                        });
+                      }}
+                      className={`p-1 rounded transition-colors ${f.visible === false ? 'text-[var(--text-tertiary)]' : 'text-[var(--accent)]'}`}
+                      title={f.visible === false ? '显示填充' : '隐藏填充'}
+                      aria-label={f.visible === false ? '显示填充' : '隐藏填充'}
+                    >
+                      {f.visible === false ? <EyeOff size={11} /> : <Eye size={11} />}
+                    </button>
                   </div>
                 ))}
                 <button onClick={addFill} className="flex items-center gap-1 text-[10px] text-[var(--text-tertiary)] hover:text-[var(--accent)] transition-colors">
@@ -1573,6 +1592,30 @@ export default function PropertiesPanel() {
                               >
                                 <option value="solid">实线</option>
                                 <option value="dashed">虚线</option>
+                              </select>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] text-[var(--text-tertiary)] uppercase tracking-wider">不透明度</label>
+                              <select
+                                value={Math.round((s.opacity ?? 1) * 100)}
+                                onChange={e => {
+                                  debouncedPushHistory();
+                                  selectedIds.forEach(id => {
+                                    const shape = shapes.find(s => s.id === id);
+                                    if (!shape) return;
+                                    const strokes = [...(shape.strokes || [{ color: shape.stroke, width: shape.strokeWidth, opacity: 1 }])];
+                                    if (!strokes[i]) return;
+                                    strokes[i] = { ...strokes[i], opacity: Number(e.target.value) / 100 };
+                                    updateShape(id, { strokes });
+                                  });
+                                }}
+                                className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1 py-1 text-[10px] text-[var(--text-primary)]"
+                              >
+                                <option value="100">100%</option>
+                                <option value="80">80%</option>
+                                <option value="60">60%</option>
+                                <option value="40">40%</option>
+                                <option value="20">20%</option>
                               </select>
                             </div>
                           </div>

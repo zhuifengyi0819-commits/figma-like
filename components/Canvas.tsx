@@ -373,7 +373,7 @@ function ShapeRenderer({
                 strokeWidth={isSelected ? Math.max(firstStroke.width, 2) : firstStroke.width}
                 cornerRadius={cornerRadius}
                 dash={firstStroke.style === 'dashed' ? (shape.strokeDash || [5, 5]) : shape.strokeDash}
-                opacity={fOpacity * (resolvedWithState.opacity)}
+                opacity={(firstStroke.opacity ?? 1) * (resolvedWithState.opacity)}
                 {...(grad ? gradientToKonvaFill(grad, w, h) : {})}
               />
             );
