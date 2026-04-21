@@ -1239,10 +1239,12 @@ export default function Canvas({ width, height }: CanvasProps) {
       rotation: u.rotation ?? shape.rotation ?? 0,
     };
 
-    // Use HistoryManager via engine's executeCommand (Command Pattern)
-    if (historyManagerRef.current && engineRef.current) {
-      const cmd = historyManagerRef.current.transformCommand(id, beforeState, afterState);
-      engineRef.current.executeCommand(cmd);
+    // Use engine.commitTransform — single write to SceneGraph via history command.
+    // handleTransformEnd uses Konva's built-in transform (node.x/y/scaleX/scaleY/rotation
+    // already applied), so commitTransform only needs to record the final state in history.
+    // Note: we pass node.x()/node.y() which already include any snap adjustment applied above.
+    if (engineRef.current) {
+      engineRef.current.commitTransform(node.x(), node.y());
     } else {
       // Fallback: direct store update (engine not yet initialized)
       updateShape(id, u);
@@ -1920,10 +1922,16 @@ export default function Canvas({ width, height }: CanvasProps) {
               const pointer = stage.getPointerPosition(); if (!pointer) return;
               const canvasX = (pointer.x - canvasPan.x) / canvasZoom;
               const canvasY = (pointer.y - canvasPan.y) / canvasZoom;
-              // Detect rotation vs resize: rotation sets `node.rotation()` during transform,
-              // resize keeps rotation 0. Also check `transformerRef.current` anchor count.
-              // Default to 'move'; resize detection happens in onTransform via enabled anchors.
-              engineRef.current.startMove(selectedIds[0], canvasX, canvasY);
+              const node = transformerRef.current?.getNode();
+              if (!node) return;
+              // Detect rotation: node.rotation() changes from 0 during rotate handle drag
+              const isRotating = Math.abs(node.rotation()) > 0.5;
+              if (isRotating) {
+                engineRef.current.startRotate(selectedIds[0], canvasX, canvasY);
+              } else {
+                // Resize or move — use startMove (handles both)
+                engineRef.current.startMove(selectedIds[0], canvasX, canvasY);
+              }
             }}
             onTransform={(e) => {
               const node = e.target;
@@ -1951,17 +1959,14 @@ export default function Canvas({ width, height }: CanvasProps) {
                 }
               }
             }}
-            onTransformEnd={() => {
+            onTransformEnd={(e) => {
               shiftRotationSnapRef.current = false;
-              // Commit transform to engine (which calls onShapesChange → store update → React re-render)
+              // Commit transform to engine (which calls onShapesChange → store update → React re-render).
+              // Use e.target (the transformed node) position directly — more reliable than pointer
+              // which may not be over the node for resize operations.
               if (selectedIds.length === 1 && engineRef.current) {
-                const stage = stageRef.current;
-                if (!stage) return;
-                const pointer = stage.getPointerPosition();
-                if (!pointer) return;
-                const canvasX = (pointer.x - canvasPan.x) / canvasZoom;
-                const canvasY = (pointer.y - canvasPan.y) / canvasZoom;
-                engineRef.current.commitTransform(canvasX, canvasY);
+                const node = e.target;
+                engineRef.current.commitTransform(node.x(), node.y());
               }
               // Clear snap guides
               setSnapLines([]);
