@@ -365,6 +365,7 @@ export class EditorEngine {
     this.activeSnapResult = null;
     this._activeSmartGuides = [];
     this.events.onSmartGuides?.([]);
+    this.events.onShapesChange?.(); // Sync SceneGraph → store after transform
   }
 
   cancelTransform(): void {
