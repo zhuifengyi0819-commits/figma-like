@@ -291,6 +291,8 @@ export class EditorEngine {
         }
       }
 
+      // No snap targets or no node — clear smart guides
+      this._activeSmartGuides = [];
       return {
         snapX: moveResult.finalX,
         snapY: moveResult.finalY,
@@ -340,7 +342,8 @@ export class EditorEngine {
         'Rotate'
       );
       this.history.execute(cmd);
-      this.transform.commitRotate(nodeId, rotation);
+      // Note: transformCommand.execute() already calls sceneGraph.updateNode,
+      // so we do NOT call transform.commitRotate() here to avoid double-write
     } else {
       // Resize
       const resizeResult = this.transform.resize(this.activeTransform, finalX, finalY);
@@ -353,7 +356,8 @@ export class EditorEngine {
           'Resize'
         );
         this.history.execute(cmd);
-        this.transform.commitResize(nodeId, resizeResult);
+        // Note: transformCommand.execute() already calls sceneGraph.updateNode,
+        // so we do NOT call transform.commitResize() here to avoid double-write
       }
     }
 

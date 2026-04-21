@@ -1915,16 +1915,15 @@ export default function Canvas({ width, height }: CanvasProps) {
             rotateAnchorStroke="#D4A853" rotateAnchorFill="#FFFFFF" rotateAnchorSize={10}
             onTransformStart={() => {
               shiftRotationSnapRef.current = true;
-              // Initialize engine transform state so updateTransform can compute snap during drag
-              if (selectedIds.length === 1 && engineRef.current) {
-                const stage = stageRef.current;
-                if (!stage) return;
-                const pointer = stage.getPointerPosition();
-                if (!pointer) return;
-                const canvasX = (pointer.x - canvasPan.x) / canvasZoom;
-                const canvasY = (pointer.y - canvasPan.y) / canvasZoom;
-                engineRef.current.startResize(selectedIds[0], 'top-left', canvasX, canvasY);
-              }
+              if (!engineRef.current || selectedIds.length !== 1) return;
+              const stage = stageRef.current; if (!stage) return;
+              const pointer = stage.getPointerPosition(); if (!pointer) return;
+              const canvasX = (pointer.x - canvasPan.x) / canvasZoom;
+              const canvasY = (pointer.y - canvasPan.y) / canvasZoom;
+              // Detect rotation vs resize: rotation sets `node.rotation()` during transform,
+              // resize keeps rotation 0. Also check `transformerRef.current` anchor count.
+              // Default to 'move'; resize detection happens in onTransform via enabled anchors.
+              engineRef.current.startMove(selectedIds[0], canvasX, canvasY);
             }}
             onTransform={(e) => {
               const node = e.target;
