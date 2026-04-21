@@ -212,7 +212,7 @@ function ImageShape({ shape, commonProps }: { shape: Shape; commonProps: Record<
 }
 
 function ShapeRenderer({
-  shape, isSelected, editingTextId, isEditingPath, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText, onDblClickPath,
+  shape, isSelected, editingTextId, isEditingPath, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText, onDblClickPath, engineRef,
 }: {
   shape: Shape;
   isSelected: boolean;
@@ -224,6 +224,7 @@ function ShapeRenderer({
   onTransformEnd: (id: string, node: Konva.Node) => void;
   onDblClickText: (id: string) => void;
   onDblClickPath?: () => void;
+  engineRef?: React.MutableRefObject<ReturnType<typeof import('@/hooks/useEditor').getEditorEngine> | null>;
 }) {
   const shapeRef = useRef<Konva.Shape>(null);
   const initPos = useRef({ x: shape.x, y: shape.y });
@@ -269,10 +270,18 @@ function ShapeRenderer({
     },
     onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => {
       initPos.current = { x: shape.x, y: shape.y };
-      // Alt+Drag duplicate: create a copy at same position and drag that instead
+      // Alt+Drag duplicate: create a copy via engine and drag that instead
       if (e.evt.altKey && !shape.locked) {
         const store = useEditorStore.getState();
-        const newId = store.addShape({ ...shape, id: undefined, x: shape.x, y: shape.y });
+        // Use engine.duplicateNode when available, fallback to store.addShape
+        let newId: string | null = null;
+        if (engineRef?.current) {
+          newId = engineRef.current.duplicateNode(shape.id, shape.x, shape.y);
+        }
+        if (!newId) {
+          // Fallback when engine is not yet initialized
+          newId = store.addShape({ ...shape, id: undefined, x: shape.x, y: shape.y });
+        }
         // Use RAF to allow React to render the new shape node before we redirect drag
         requestAnimationFrame(() => {
           const stage = e.target.getStage();
@@ -284,7 +293,7 @@ function ShapeRenderer({
               newNode.position({ x: e.target.x(), y: e.target.y() });
               newNode.startDrag();
               // Update selection to the duplicate
-              store.setSelectedIds([newId]);
+              store.setSelectedIds([newId!]);
             }
           }
         });
@@ -404,7 +413,7 @@ function ShapeRenderer({
 
 // Recursive frame renderer: render frame background + children clipped inside
 function FrameRenderer({
-  frame, allShapes, selectedIds, editingTextId, isEditingPath, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText, onDblClickPath,
+  frame, allShapes, selectedIds, editingTextId, isEditingPath, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText, onDblClickPath, engineRef,
 }: {
   frame: Shape;
   allShapes: Shape[];
@@ -417,6 +426,7 @@ function FrameRenderer({
   onTransformEnd: (id: string, node: Konva.Node) => void;
   onDblClickText: (id: string) => void;
   onDblClickPath?: (id: string) => void;
+  engineRef?: React.MutableRefObject<ReturnType<typeof import('@/hooks/useEditor').getEditorEngine> | null>;
 }) {
   const groupRef = useRef<Konva.Group>(null);
   const children = allShapes.filter(s => s.parentId === frame.id);
@@ -474,7 +484,14 @@ function FrameRenderer({
         // Alt+Drag duplicate for frames/groups
         if (e.evt.altKey && !frame.locked) {
           const store = useEditorStore.getState();
-          const newId = store.addShape({ ...frame, id: undefined, x: frame.x, y: frame.y });
+          // Use engine.duplicateNode when available, fallback to store.addShape
+          let newId: string | null = null;
+          if (engineRef?.current) {
+            newId = engineRef.current.duplicateNode(frame.id, frame.x, frame.y);
+          }
+          if (!newId) {
+            newId = store.addShape({ ...frame, id: undefined, x: frame.x, y: frame.y });
+          }
           requestAnimationFrame(() => {
             const stage = e.target.getStage();
             if (stage) {
@@ -559,6 +576,7 @@ function FrameRenderer({
                   onDragMove={onDragMove}
                   onTransformEnd={onTransformEnd}
                   onDblClickText={onDblClickText}
+                  engineRef={engineRef}
                 />
               );
             } else {
@@ -575,6 +593,7 @@ function FrameRenderer({
                   onTransformEnd={onTransformEnd}
                   onDblClickText={onDblClickText}
                   onDblClickPath={onDblClickPath ? (() => onDblClickPath(child.id)) : undefined}
+                  engineRef={engineRef}
                 />
               );
             }
@@ -598,6 +617,7 @@ function FrameRenderer({
                           onDragMove={onDragMove}
                           onTransformEnd={onTransformEnd}
                           onDblClickText={onDblClickText}
+                          engineRef={engineRef}
                         />
                       );
                     }
@@ -639,6 +659,7 @@ function FrameRenderer({
                 onDragMove={onDragMove}
                 onTransformEnd={onTransformEnd}
                 onDblClickText={onDblClickText}
+                engineRef={engineRef}
               />
             );
           } else {
@@ -700,6 +721,11 @@ export default function Canvas({ width, height }: CanvasProps) {
   const lastPanPos = useRef({ x: 0, y: 0 });
   const shiftRotationSnapRef = useRef(false);
   const [spacePressed, setSpacePressed] = useState(false);
+
+  // EditorEngine instance (singleton via getEditorEngine)
+  const engineRef = useRef(getEditorEngine());
+  // Stable reference to the engine's history manager (avoids repeated getEditorEngine() calls)
+  const historyManagerRef = useRef(engineRef.current?.getHistoryManager() ?? null);
 
   // SnapEngine instance (initialized once)
   const snapEngineRef = useRef<SnapEngine | null>(null);
@@ -1152,10 +1178,9 @@ export default function Canvas({ width, height }: CanvasProps) {
     if (dx === 0 && dy === 0) return;
 
     // Use HistoryManager via engine's executeCommand (Command Pattern)
-    const engine = getEditorEngine();
-    if (engine) {
-      const cmd = engine.getHistoryManager().moveCommand(allMovingIds, dx, dy);
-      engine.executeCommand(cmd);
+    if (historyManagerRef.current && engineRef.current) {
+      const cmd = historyManagerRef.current.moveCommand(allMovingIds, dx, dy);
+      engineRef.current.executeCommand(cmd);
     } else {
       // Fallback: direct store update (engine not yet initialized)
       allMovingIds.forEach(sid => {
@@ -1215,10 +1240,9 @@ export default function Canvas({ width, height }: CanvasProps) {
     };
 
     // Use HistoryManager via engine's executeCommand (Command Pattern)
-    const engine = getEditorEngine();
-    if (engine) {
-      const cmd = engine.getHistoryManager().transformCommand(id, beforeState, afterState);
-      engine.executeCommand(cmd);
+    if (historyManagerRef.current && engineRef.current) {
+      const cmd = historyManagerRef.current.transformCommand(id, beforeState, afterState);
+      engineRef.current.executeCommand(cmd);
     } else {
       // Fallback: direct store update (engine not yet initialized)
       updateShape(id, u);
@@ -1682,6 +1706,7 @@ export default function Canvas({ width, height }: CanvasProps) {
                     onDblClickText={handleDblClickText}
                     isEditingPath={editingPathId !== null}
                     onDblClickPath={handleDblClickPath}
+                    engineRef={engineRef}
                   />
                 );
               } else {
@@ -1698,6 +1723,7 @@ export default function Canvas({ width, height }: CanvasProps) {
                     onTransformEnd={handleTransformEnd}
                     onDblClickText={handleDblClickText}
                     onDblClickPath={() => handleDblClickPath(shape.id)}
+                    engineRef={engineRef}
                   />
                 );
               }
@@ -1723,6 +1749,7 @@ export default function Canvas({ width, height }: CanvasProps) {
                     onTransformEnd={handleTransformEnd}
                     onDblClickText={handleDblClickText}
                     onDblClickPath={() => handleDblClickPath(shape.id)}
+                    engineRef={engineRef}
                   />
                 </Group>
               );
@@ -1886,7 +1913,19 @@ export default function Canvas({ width, height }: CanvasProps) {
             rotateEnabled={true}
             rotateAnchorOffset={28}
             rotateAnchorStroke="#D4A853" rotateAnchorFill="#FFFFFF" rotateAnchorSize={10}
-            onTransformStart={() => { shiftRotationSnapRef.current = true; }}
+            onTransformStart={() => {
+              shiftRotationSnapRef.current = true;
+              // Initialize engine transform state so updateTransform can compute snap during drag
+              if (selectedIds.length === 1 && engineRef.current) {
+                const stage = stageRef.current;
+                if (!stage) return;
+                const pointer = stage.getPointerPosition();
+                if (!pointer) return;
+                const canvasX = (pointer.x - canvasPan.x) / canvasZoom;
+                const canvasY = (pointer.y - canvasPan.y) / canvasZoom;
+                engineRef.current.startResize(selectedIds[0], 'top-left', canvasX, canvasY);
+              }
+            }}
             onTransform={(e) => {
               const node = e.target;
               if (shiftRotationSnapRef.current && (e.evt as unknown as MouseEvent).shiftKey) {
@@ -1894,8 +1933,40 @@ export default function Canvas({ width, height }: CanvasProps) {
                 const snapped = Math.round(rotation / 15) * 15;
                 node.rotation(snapped);
               }
+              // Feed Konva node's current position into engine for snap guide computation
+              if (engineRef.current && selectedIds.length === 1) {
+                const stage = stageRef.current;
+                if (!stage) return;
+                const pointer = stage.getPointerPosition();
+                if (!pointer) return;
+                const canvasX = (pointer.x - canvasPan.x) / canvasZoom;
+                const canvasY = (pointer.y - canvasPan.y) / canvasZoom;
+                const result = engineRef.current.updateTransform(canvasX, canvasY);
+                if (result) {
+                  // Update Konva node position from engine's snap-adjusted result
+                  node.x(result.bounds.x);
+                  node.y(result.bounds.y);
+                  // Also feed snap guides to SelectionOverlay via engine's stored state
+                  const guides = engineRef.current._getSmartGuides();
+                  setSnapLines(guides.slice(0, 6));
+                }
+              }
             }}
-            onTransformEnd={() => { shiftRotationSnapRef.current = false; }}
+            onTransformEnd={() => {
+              shiftRotationSnapRef.current = false;
+              // Commit transform to engine (which calls onShapesChange → store update → React re-render)
+              if (selectedIds.length === 1 && engineRef.current) {
+                const stage = stageRef.current;
+                if (!stage) return;
+                const pointer = stage.getPointerPosition();
+                if (!pointer) return;
+                const canvasX = (pointer.x - canvasPan.x) / canvasZoom;
+                const canvasY = (pointer.y - canvasPan.y) / canvasZoom;
+                engineRef.current.commitTransform(canvasX, canvasY);
+              }
+              // Clear snap guides
+              setSnapLines([]);
+            }}
             enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right', 'middle-left', 'middle-right', 'top-center', 'bottom-center']}
           />
         </Layer>

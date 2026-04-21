@@ -2,6 +2,7 @@
 // Central engine that bridges SceneGraph/Selection/Transform/Snap/History/Keyboard
 // with the existing Zustand store. Single entry point for all editor operations.
 
+import { nanoid } from 'nanoid';
 import type { SceneGraph } from '@/lib/scene-graph';
 import { SelectionEngine } from '@/lib/selection/SelectionEngine';
 import { TransformEngine, type ResizeHandle, type TransformState } from '@/lib/transform/TransformEngine';
@@ -9,6 +10,8 @@ import { SnapEngine, type SnapResult, type SnapConfig, type SnapTarget } from '@
 import { HistoryManager } from '@/lib/history/HistoryManager';
 import type { SGNode, MarqueeRect } from '@/lib/scene-graph/types';
 import type { EditorState } from './types';
+import { useEditorStore } from '@/stores/useEditorStore';
+import { syncShapesToSceneGraph } from './ShapeConverter';
 
 export interface EditorEngineConfig {
   sceneGraph: SceneGraph;
@@ -264,6 +267,12 @@ export class EditorEngine {
 
           this.activeSnapResult = snapResult;
 
+          // Store smart guides for SelectionOverlay retrieval via _getSmartGuides()
+          const guideLines: { x?: number; y?: number }[] = [];
+          for (const line of snapResult.verticalLines) guideLines.push({ x: line.position });
+          for (const line of snapResult.horizontalLines) guideLines.push({ y: line.position });
+          this._activeSmartGuides = guideLines;
+
           if (snapResult.verticalLines.length > 0 || snapResult.horizontalLines.length > 0) {
             this.events.onSmartGuides?.(
               this.snap.getGuidePaths(
@@ -359,6 +368,13 @@ export class EditorEngine {
     this.events.onSmartGuides?.([]);
   }
 
+  /** Expose active smart guides for the SelectionOverlay */
+  _getSmartGuides() {
+    return this._activeSmartGuides || [];
+  }
+
+  private _activeSmartGuides: { x?: number; y?: number }[] = [];
+
 // ============================================================
 // History API (delegates to HistoryManager)
 // ============================================================
@@ -436,6 +452,45 @@ export class EditorEngine {
     const cmd = this.history.deleteCommand(ids);
     this.history.execute(cmd);
     this.clearSelection();
+  }
+
+  /**
+   * Create a duplicate of a node at the same position.
+   * Uses store.addShape (which handles ID generation + defaults) and syncs to SceneGraph.
+   * The duplicate action is recorded in HistoryManager so it can be undone/redone.
+   * Returns the new node ID.
+   */
+  duplicateNode(sourceId: string, x: number, y: number): string | null {
+    // Get the Shape from store (Canvas always has store access)
+    const { shapes } = useEditorStore.getState();
+    const source = shapes.find(s => s.id === sourceId);
+    if (!source) return null;
+
+    // Use store.addShape which handles ID generation and defaults
+    const newId = useEditorStore.getState().addShape({
+      ...source,
+      id: undefined,
+      x,
+      y,
+    });
+
+    // Sync the new node to SceneGraph so engines see it
+    const newShape = useEditorStore.getState().shapes.find(s => s.id === newId);
+    if (newShape) {
+      syncShapesToSceneGraph([newShape], this.sceneGraph);
+    }
+
+    // Record in history so this duplication can be undone/redone
+    const newIdMap = new Map([[sourceId, newId]]);
+    const cmd = this.history.duplicateCommand(
+      [sourceId],
+      newIdMap,
+      source.parentId ?? 'canvas'
+    );
+    this.history.execute(cmd);
+
+    this.events.onShapesChange?.();
+    return newId;
   }
 
   // ============================================================
