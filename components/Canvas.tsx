@@ -719,7 +719,7 @@ function FrameRenderer({
 
 export default function Canvas({ width, height }: CanvasProps) {
   const store = useEditorStore();
-  const { shapes, selectedIds, activeTool, canvasZoom, canvasPan, canvasBg, setSelectedIds, clearSelection, updateShape, addShape, deleteShapes, duplicateShapes, setCanvasZoom, setCanvasPan, setViewportSize, setActiveTool, undo, redo, setShowHelp, pushHistory, applyConstraints, copyStyle, pasteStyle, showContextMenu, bringForward, sendBackward, bringToFront, sendToBack, alignShapes, setShowExportModal, panToShapeIds, editingComponentId, exitComponentEditing, enterComponentEditing } = store;
+  const { shapes, selectedIds, activeTool, canvasZoom, canvasPan, canvasBg, setSelectedIds, clearSelection, updateShape, addShape, deleteShapes, duplicateShapes, setCanvasZoom, setCanvasPan, setViewportSize, setActiveTool, undo, redo, setShowHelp, pushHistory, applyConstraints, copyStyle, pasteStyle, showContextMenu, bringForward, sendBackward, bringToFront, sendToBack, alignShapes, setShowExportModal, panToShapeIds, editingComponentId, exitComponentEditing, enterComponentEditing, contextMenu } = store;
 
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -2062,8 +2062,8 @@ export default function Canvas({ width, height }: CanvasProps) {
 
       <div className="absolute bottom-3 right-3 px-2 py-1 bg-[var(--bg-elevated)] border border-[var(--border)] rounded text-xs text-[var(--text-secondary)] font-mono select-none">{Math.round(canvasZoom * 100)}%</div>
 
-      {/* Component Editing Overlay */}
-      {editingComponent && (
+      {/* Component Editing Overlay — hidden while context menu is open */}
+      {editingComponent && !contextMenu && (
         <div className="absolute top-0 left-0 right-0 z-20 h-9 flex items-center gap-3 px-4 bg-[#1a1a1a]/95 backdrop-blur border-b border-[#333]">
           <button
             onClick={() => exitComponentEditing()}
