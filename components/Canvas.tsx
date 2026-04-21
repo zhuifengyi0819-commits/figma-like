@@ -212,7 +212,7 @@ function ImageShape({ shape, commonProps }: { shape: Shape; commonProps: Record<
 }
 
 function ShapeRenderer({
-  shape, isSelected, editingTextId, isEditingPath, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText, onDblClickPath, engineRef,
+  shape, isSelected, editingTextId, isEditingPath, onSelect, onDragEnd, onDragMove, onTransformEnd, onDblClickText, onDblClickPath, engineRef, draggingShapeIdRef,
 }: {
   shape: Shape;
   isSelected: boolean;
@@ -225,6 +225,7 @@ function ShapeRenderer({
   onDblClickText: (id: string) => void;
   onDblClickPath?: () => void;
   engineRef?: React.MutableRefObject<ReturnType<typeof import('@/hooks/useEditor').getEditorEngine> | null>;
+  draggingShapeIdRef?: React.MutableRefObject<string | null>;
 }) {
   const shapeRef = useRef<Konva.Shape>(null);
   const initPos = useRef({ x: shape.x, y: shape.y });
@@ -292,8 +293,9 @@ function ShapeRenderer({
               e.target.stopDrag();
               newNode.position({ x: e.target.x(), y: e.target.y() });
               newNode.startDrag();
-              // Update selection to the duplicate
+              // Update selection + track that THIS shape is what's being dragged
               store.setSelectedIds([newId!]);
+              if (draggingShapeIdRef) draggingShapeIdRef.current = newId!;
             }
           }
         });
@@ -304,7 +306,12 @@ function ShapeRenderer({
       const dy = e.target.y() - initPos.current.y;
       onDragMove(shape.id, dx, dy);
     },
-    onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => onDragEnd(shape.id, e.target.x(), e.target.y()),
+    onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => {
+      // Use draggingShapeIdRef if set (Alt+Drag duplicate case), otherwise use shape.id
+      const actualId = draggingShapeIdRef?.current ?? shape.id;
+      onDragEnd(actualId, e.target.x(), e.target.y());
+      if (draggingShapeIdRef) draggingShapeIdRef.current = null; // Reset after drag ends
+    },
     onTransformEnd: () => { if (shapeRef.current) onTransformEnd(shape.id, shapeRef.current); },
     ...shadowProps,
   };
@@ -720,6 +727,8 @@ export default function Canvas({ width, height }: CanvasProps) {
   const isPanning = useRef(false);
   const lastPanPos = useRef({ x: 0, y: 0 });
   const shiftRotationSnapRef = useRef(false);
+  // Tracks the actual shape ID being dragged (updated on Alt+Drag to the duplicate's ID)
+  const draggingShapeIdRef = useRef<string | null>(null);
   const [spacePressed, setSpacePressed] = useState(false);
 
   // EditorEngine instance (singleton via getEditorEngine)
@@ -1726,6 +1735,7 @@ export default function Canvas({ width, height }: CanvasProps) {
                     onDblClickText={handleDblClickText}
                     onDblClickPath={() => handleDblClickPath(shape.id)}
                     engineRef={engineRef}
+                    draggingShapeIdRef={draggingShapeIdRef}
                   />
                 );
               }
@@ -1752,6 +1762,7 @@ export default function Canvas({ width, height }: CanvasProps) {
                     onDblClickText={handleDblClickText}
                     onDblClickPath={() => handleDblClickPath(shape.id)}
                     engineRef={engineRef}
+                    draggingShapeIdRef={draggingShapeIdRef}
                   />
                 </Group>
               );
