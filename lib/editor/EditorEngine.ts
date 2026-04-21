@@ -337,13 +337,15 @@ export class EditorEngine {
     const node = this.sceneGraph.getNode(activeNodeId);
     if (!node) return;
 
-    // Before state: snapshot of node BEFORE this transform (from activeTransform.startBounds)
+    // Before state: snapshot of node BEFORE this transform (from sceneGraph)
     const before = {
       x: node.x,
       y: node.y,
       width: node.width,
       height: node.height,
       rotation: node.rotation ?? 0,
+      scaleX: (node as any).scaleX ?? 1,
+      scaleY: (node as any).scaleY ?? 1,
     };
 
     // After state: what Konva visually shows now (from handleTransformEnd)
@@ -353,6 +355,8 @@ export class EditorEngine {
       width: finalWidth,
       height: finalHeight,
       rotation: finalRotation,
+      scaleX: finalScaleX,
+      scaleY: finalScaleY,
     };
 
     // Record in history for undo/redo (execute applies the command which is already done,

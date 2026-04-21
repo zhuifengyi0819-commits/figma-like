@@ -146,6 +146,7 @@ function applyBasePropsToShape(node: SGNode, shape: Shape): void {
   shape.opacity = node.opacity;
   shape.visible = node.visible;
   shape.locked = node.locked;
+  shape.parentId = node.parentId ?? undefined;
   if (node.blendMode) shape.blendMode = node.blendMode;
   if (node.fills) shape.fills = node.fills;
   // strokes not on Shape — skip

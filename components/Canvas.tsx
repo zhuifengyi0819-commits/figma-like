@@ -1239,21 +1239,23 @@ export default function Canvas({ width, height }: CanvasProps) {
       setSnapLines(snapGuides.slice(0, 6));
     }
 
-    // Build after state
-    const afterState = {
-      x: u.x ?? shape.x,
-      y: u.y ?? shape.y,
-      width: u.width ?? shape.width ?? 100,
-      height: u.height ?? shape.height ?? 100,
-      rotation: u.rotation ?? shape.rotation ?? 0,
-    };
+    // Build after state (Konva node's final dimensions after flip adjustment)
+    const finalWidth = u.width ?? shape.width ?? 100;
+    const finalHeight = u.height ?? shape.height ?? 100;
 
-    // Use engine.commitTransform — single write to SceneGraph via history command.
-    // handleTransformEnd uses Konva's built-in transform (node.x/y/scaleX/scaleY/rotation
-    // already applied), so commitTransform only needs to record the final state in history.
-    // Note: we pass node.x()/node.y() which already include any snap adjustment applied above.
+    // Use engine.commitTransformFromKonva — records full Konva node state
+    // (x, y, width, height, rotation, scaleX, scaleY) in history for undo/redo.
     if (engineRef.current) {
-      engineRef.current.commitTransform(node.x(), node.y());
+      engineRef.current.commitTransformFromKonva(
+        id,
+        node.x(),            // x (may have been adjusted by snap)
+        node.y(),            // y (may have been adjusted by snap)
+        finalWidth,          // final width after scale+flip
+        finalHeight,         // final height after scale+flip
+        node.rotation(),    // rotation
+        newFlipX,            // final scaleX (includes flip)
+        newFlipY             // final scaleY (includes flip)
+      );
     } else {
       // Fallback: direct store update (engine not yet initialized)
       updateShape(id, u);
