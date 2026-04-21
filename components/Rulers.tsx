@@ -19,7 +19,7 @@ function getTickInterval(zoom: number): { major: number; minor: number } {
   return { major: 10, minor: 2 };
 }
 
-function HorizontalRuler({ width }: { width: number }) {
+function HorizontalRuler({ width, mouseX }: { width: number; mouseX: number | null }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { canvasZoom, canvasPan } = useEditorStore();
 
@@ -68,7 +68,19 @@ function HorizontalRuler({ width }: { width: number }) {
     ctx.lineTo(width, RULER_SIZE - 0.5);
     ctx.lineWidth = 1;
     ctx.stroke();
-  }, [width, canvasZoom, canvasPan, major, minor]);
+
+    // Mouse indicator line
+    if (mouseX !== null && mouseX >= 0 && mouseX <= width) {
+      ctx.strokeStyle = '#FF4444';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(mouseX, 2);
+      ctx.lineTo(mouseX, RULER_SIZE);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }, [width, canvasZoom, canvasPan, major, minor, mouseX]);
 
   return (
     <canvas
@@ -79,7 +91,7 @@ function HorizontalRuler({ width }: { width: number }) {
   );
 }
 
-function VerticalRuler({ height }: { height: number }) {
+function VerticalRuler({ height, mouseY }: { height: number; mouseY: number | null }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { canvasZoom, canvasPan } = useEditorStore();
 
@@ -132,7 +144,19 @@ function VerticalRuler({ height }: { height: number }) {
     ctx.lineTo(RULER_SIZE - 0.5, height);
     ctx.lineWidth = 1;
     ctx.stroke();
-  }, [height, canvasZoom, canvasPan, major, minor]);
+
+    // Mouse indicator line
+    if (mouseY !== null && mouseY >= 0 && mouseY <= height) {
+      ctx.strokeStyle = '#FF4444';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(2, mouseY);
+      ctx.lineTo(RULER_SIZE, mouseY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }, [height, canvasZoom, canvasPan, major, minor, mouseY]);
 
   return (
     <canvas
@@ -143,7 +167,7 @@ function VerticalRuler({ height }: { height: number }) {
   );
 }
 
-export default function Rulers({ width, height }: { width: number; height: number }) {
+export default function Rulers({ width, height, mouseX, mouseY }: { width: number; height: number; mouseX: number | null; mouseY: number | null }) {
   return (
     <>
       {/* Corner square */}
@@ -153,11 +177,11 @@ export default function Rulers({ width, height }: { width: number; height: numbe
       />
       {/* Horizontal ruler */}
       <div className="absolute top-0 z-20" style={{ left: RULER_SIZE }}>
-        <HorizontalRuler width={width - RULER_SIZE} />
+        <HorizontalRuler width={width - RULER_SIZE} mouseX={mouseX} />
       </div>
       {/* Vertical ruler */}
       <div className="absolute left-0 z-20" style={{ top: RULER_SIZE }}>
-        <VerticalRuler height={height - RULER_SIZE} />
+        <VerticalRuler height={height - RULER_SIZE} mouseY={mouseY} />
       </div>
     </>
   );

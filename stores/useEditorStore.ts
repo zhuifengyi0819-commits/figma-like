@@ -186,6 +186,13 @@ interface EditorState {
   setShapeState: (shapeId: string, state: ComponentStateType) => void;
   resetShapeState: (shapeId: string) => void;
   resetAllStates: () => void;
+
+  // ==================== Manual Guides ====================
+  guides: { id: string; x?: number; y?: number; locked: boolean }[];
+  addGuide: (xOrY: number, axis: 'x' | 'y', locked?: boolean) => string;
+  updateGuide: (id: string, updates: Partial<{ x?: number; y?: number; locked: boolean }>) => void;
+  deleteGuide: (id: string) => void;
+  clearGuides: () => void;
 }
 
 // === Helpers ===
@@ -430,6 +437,31 @@ export const useEditorStore = create<EditorState>()(
         });
       },
       resetAllStates: () => set({ activeStates: {} }),
+
+      // ==================== Manual Guides ====================
+      guides: [],
+
+      addGuide: (xOrY, axis, locked = false) => {
+        const id = uuid();
+        set(state => ({
+          guides: [...state.guides, axis === 'x' ? { id, x: xOrY, locked } : { id, y: xOrY, locked }],
+        }));
+        return id;
+      },
+
+      updateGuide: (id, updates) => {
+        set(state => ({
+          guides: state.guides.map(g => g.id === id ? { ...g, ...updates } : g),
+        }));
+      },
+
+      deleteGuide: (id) => {
+        set(state => ({
+          guides: state.guides.filter(g => g.id !== id),
+        }));
+      },
+
+      clearGuides: () => set({ guides: [] }),
 
       _setPageShapes: (shapes) => {
         set(state => {

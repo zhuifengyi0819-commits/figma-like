@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Lock, Unlock, ClipboardPaste, Grid3X3, LayoutGrid, Square, Circle, Type, Minus, Frame, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd, AlignJustify, Edit3 } from 'lucide-react';
+import { Copy, Trash2, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Lock, Unlock, ClipboardPaste, Grid3X3, LayoutGrid, Square, Circle, Type, Minus, Frame, AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd, AlignJustify, Edit3, Plus, Minus as MinusIcon } from 'lucide-react';
 import BatchRenameModal from './BatchRenameModal';
 
 interface MenuItem {
@@ -38,6 +38,7 @@ export default function ContextMenu() {
     setArrayModalOpen,
     createComponent,
     addShape,
+    addGuide,
     canvasZoom,
     canvasPan,
     alignShapes,
@@ -158,6 +159,16 @@ export default function ContextMenu() {
     hideContextMenu();
   };
 
+  const handleAddVerticalGuide = () => {
+    addGuide(canvasX, 'x');
+    hideContextMenu();
+  };
+
+  const handleAddHorizontalGuide = () => {
+    addGuide(canvasY, 'y');
+    hideContextMenu();
+  };
+
   // Empty canvas: show create shape options
   // Has selection: show shape manipulation options
   const groups: MenuGroup[] = isEmptyCanvas
@@ -172,6 +183,12 @@ export default function ContextMenu() {
         {
           items: [
             { label: '全选', icon: <Copy size={13} />, shortcut: '⌘A', action: handleSelectAll },
+          ],
+        },
+        {
+          items: [
+            { label: '添加垂直参考线', icon: <Plus size={13} />, action: handleAddVerticalGuide },
+            { label: '添加水平参考线', icon: <Plus size={13} />, action: handleAddHorizontalGuide },
           ],
         },
       ]

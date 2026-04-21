@@ -719,7 +719,7 @@ function FrameRenderer({
 
 export default function Canvas({ width, height }: CanvasProps) {
   const store = useEditorStore();
-  const { shapes, selectedIds, activeTool, canvasZoom, canvasPan, canvasBg, setSelectedIds, clearSelection, updateShape, addShape, deleteShapes, duplicateShapes, setCanvasZoom, setCanvasPan, setViewportSize, setActiveTool, undo, redo, setShowHelp, pushHistory, applyConstraints, copyStyle, pasteStyle, showContextMenu, bringForward, sendBackward, bringToFront, sendToBack, alignShapes, setShowExportModal, panToShapeIds, editingComponentId, exitComponentEditing, enterComponentEditing, contextMenu } = store;
+  const { shapes, selectedIds, activeTool, canvasZoom, canvasPan, canvasBg, setSelectedIds, clearSelection, updateShape, addShape, deleteShapes, duplicateShapes, setCanvasZoom, setCanvasPan, setViewportSize, setActiveTool, undo, redo, setShowHelp, pushHistory, applyConstraints, copyStyle, pasteStyle, showContextMenu, bringForward, sendBackward, bringToFront, sendToBack, alignShapes, setShowExportModal, panToShapeIds, editingComponentId, exitComponentEditing, enterComponentEditing, contextMenu, guides, addGuide, deleteGuide } = store;
 
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1143,7 +1143,7 @@ export default function Canvas({ width, height }: CanvasProps) {
     }
 
     // Compute snap using SnapEngine
-    const guides: { x?: number; y?: number }[] = [];
+    const snapGuides: { x?: number; y?: number }[] = [];
     // Exclude shapes that will move with the dragged shape (groupId, frame children, z-order above)
     const parentId = shape.parentId ?? undefined;
     const siblings = currentShapes.filter(s => (s.parentId ?? undefined) === parentId);
@@ -1161,10 +1161,58 @@ export default function Canvas({ width, height }: CanvasProps) {
         shape.width || 100, shape.height || 100, 'both'
       );
       // Convert SnapEngine output (verticalLines/horizontalLines) to {x?, y?}[] for setSnapLines
-      for (const line of snapped.verticalLines) guides.push({ x: line.position });
-      for (const line of snapped.horizontalLines) guides.push({ y: line.position });
+      for (const line of snapped.verticalLines) snapGuides.push({ x: line.position });
+      for (const line of snapped.horizontalLines) snapGuides.push({ y: line.position });
     }
-    setSnapLines(guides.slice(0, 6));
+
+    // Manual guide snapping
+    const threshold = 6 / canvasZoom;
+    const storeGuides = useEditorStore.getState().guides;
+    const newX = shape.x + dx;
+    const newY = shape.y + dy;
+    const w = shape.width || 100;
+    const h = shape.height || 100;
+    let snapOffsetX = 0;
+    let snapOffsetY = 0;
+
+    for (const guide of storeGuides) {
+      if (guide.locked) continue;
+      // X guide: snap left, center, right edge
+      if (guide.x !== undefined) {
+        const distLeft = Math.abs(newX - guide.x);
+        const distCenter = Math.abs(newX + w / 2 - guide.x);
+        const distRight = Math.abs(newX + w - guide.x);
+        const minDist = Math.min(distLeft, distCenter, distRight);
+        if (minDist < threshold && minDist < Math.abs(snapOffsetX)) {
+          if (distLeft <= distCenter && distLeft <= distRight) {
+            snapOffsetX = guide.x - newX;
+          } else if (distCenter <= distRight) {
+            snapOffsetX = guide.x - (newX + w / 2);
+          } else {
+            snapOffsetX = guide.x - (newX + w);
+          }
+          snapGuides.push({ x: guide.x });
+        }
+      }
+      // Y guide: snap top, center, bottom edge
+      if (guide.y !== undefined) {
+        const distTop = Math.abs(newY - guide.y);
+        const distCenter = Math.abs(newY + h / 2 - guide.y);
+        const distBottom = Math.abs(newY + h - guide.y);
+        const minDist = Math.min(distTop, distCenter, distBottom);
+        if (minDist < threshold && minDist < Math.abs(snapOffsetY)) {
+          if (distTop <= distCenter && distTop <= distBottom) {
+            snapOffsetY = guide.y - newY;
+          } else if (distCenter <= distBottom) {
+            snapOffsetY = guide.y - (newY + h / 2);
+          } else {
+            snapOffsetY = guide.y - (newY + h);
+          }
+          snapGuides.push({ y: guide.y });
+        }
+      }
+    }
+    setSnapLines(snapGuides.slice(0, 6));
   }, []);
 
   const handleDragEnd = useCallback((id: string, x: number, y: number) => {
@@ -2020,6 +2068,123 @@ export default function Canvas({ width, height }: CanvasProps) {
         pan={canvasPan}
         zoom={canvasZoom}
       />
+
+      {/* Manual guide lines — absolute positioned SVG overlay */}
+      <svg
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'none',
+          overflow: 'visible',
+          zIndex: 15,
+        }}
+      >
+        {guides.map(guide => {
+          if (guide.x !== undefined) {
+            const screenX = guide.x * canvasZoom + canvasPan.x;
+            return (
+              <g key={guide.id}>
+                <line
+                  x1={screenX}
+                  y1={-5000 * canvasZoom}
+                  x2={screenX}
+                  y2={10000 * canvasZoom}
+                  stroke={guide.locked ? '#FF8800' : '#FF4444'}
+                  strokeWidth={1}
+                  strokeDasharray={guide.locked ? '4 4' : 'none'}
+                />
+                {/* Clickable handle at top for dragging/deleting */}
+                <circle
+                  cx={screenX}
+                  cy={-4}
+                  r={4}
+                  fill={guide.locked ? '#FF8800' : '#FF4444'}
+                  stroke="#fff"
+                  strokeWidth={1}
+                  pointerEvents="all"
+                  style={{ cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (e.altKey) {
+                      deleteGuide(guide.id);
+                    }
+                  }}
+                  onMouseDown={(e) => {
+                    if (guide.locked) return;
+                    e.stopPropagation();
+                    const startClientX = e.clientX;
+                    const startGuideX = guide.x!;
+                    const onMouseMove = (me: MouseEvent) => {
+                      const dx = (me.clientX - startClientX) / canvasZoom;
+                      const newX = Math.round(startGuideX + dx);
+                      useEditorStore.getState().updateGuide(guide.id, { x: newX });
+                    };
+                    const onMouseUp = () => {
+                      document.removeEventListener('mousemove', onMouseMove);
+                      document.removeEventListener('mouseup', onMouseUp);
+                    };
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                  }}
+                />
+              </g>
+            );
+          }
+          if (guide.y !== undefined) {
+            const screenY = guide.y * canvasZoom + canvasPan.y;
+            return (
+              <g key={guide.id}>
+                <line
+                  x1={-5000 * canvasZoom}
+                  y1={screenY}
+                  x2={10000 * canvasZoom}
+                  y2={screenY}
+                  stroke={guide.locked ? '#FF8800' : '#FF4444'}
+                  strokeWidth={1}
+                  strokeDasharray={guide.locked ? '4 4' : 'none'}
+                />
+                <circle
+                  cx={-4}
+                  cy={screenY}
+                  r={4}
+                  fill={guide.locked ? '#FF8800' : '#FF4444'}
+                  stroke="#fff"
+                  strokeWidth={1}
+                  pointerEvents="all"
+                  style={{ cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (e.altKey) {
+                      deleteGuide(guide.id);
+                    }
+                  }}
+                  onMouseDown={(e) => {
+                    if (guide.locked) return;
+                    e.stopPropagation();
+                    const startClientY = e.clientY;
+                    const startGuideY = guide.y!;
+                    const onMouseMove = (me: MouseEvent) => {
+                      const dy = (me.clientY - startClientY) / canvasZoom;
+                      const newY = Math.round(startGuideY + dy);
+                      useEditorStore.getState().updateGuide(guide.id, { y: newY });
+                    };
+                    const onMouseUp = () => {
+                      document.removeEventListener('mousemove', onMouseMove);
+                      document.removeEventListener('mouseup', onMouseUp);
+                    };
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                  }}
+                />
+              </g>
+            );
+          }
+          return null;
+        })}
+      </svg>
 
       {editingShape && textareaStyle && (
         <textarea

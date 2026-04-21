@@ -27,9 +27,10 @@ const PrototypeOverview = dynamic(() => import('./prototype/PrototypeOverview'),
 export default function Editor() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
+  const [mousePos, setMousePos] = useState<{ x: number | null; y: number | null }>({ x: null, y: null });
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showPrototypeOverview, setShowPrototypeOverview] = useState(false);
-  const { prototypeMode, setPrototypeMode, arrayModalOpen, setArrayModalOpen, selectedIds, showDevicePreview, setShowDevicePreview, shapes, pages, activePageId } = useEditorStore();
+  const { prototypeMode, setPrototypeMode, arrayModalOpen, setArrayModalOpen, selectedIds, showDevicePreview, setShowDevicePreview, shapes, pages, activePageId, canvasPan, canvasZoom } = useEditorStore();
 
   useEffect(() => {
     const updateSize = () => {
@@ -137,8 +138,23 @@ export default function Editor() {
         <div className="w-64 flex-shrink-0">
           <LeftPanel />
         </div>
-        <div ref={containerRef} className="flex-1 relative" data-canvas-area>
-          <Rulers width={canvasSize.width} height={canvasSize.height} />
+        <div ref={containerRef} className="flex-1 relative" data-canvas-area
+          onMouseMove={(e) => {
+            const rect = containerRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            // Convert screen coords to canvas coords, then to ruler-local coords
+            const canvasX = (e.clientX - rect.left - canvasPan.x) / canvasZoom;
+            const canvasY = (e.clientY - rect.top - canvasPan.y) / canvasZoom;
+            // Ruler-local: horizontal ruler sees x relative to its left edge (RULER_SIZE offset)
+            // Vertical ruler sees y relative to its top edge (RULER_SIZE offset)
+            setMousePos({
+              x: canvasX + RULER_SIZE, // horizontal ruler starts at RULER_SIZE offset
+              y: canvasY + RULER_SIZE, // vertical ruler starts at RULER_SIZE offset
+            });
+          }}
+          onMouseLeave={() => setMousePos({ x: null, y: null })}
+        >
+          <Rulers width={canvasSize.width} height={canvasSize.height} mouseX={mousePos.x} mouseY={mousePos.y} />
           <div className="absolute" style={{ top: RULER_SIZE, left: RULER_SIZE, right: 0, bottom: 0 }}>
             <Canvas width={canvasSize.width - RULER_SIZE} height={canvasSize.height - RULER_SIZE} />
             {isFlowMode && frames.length > 0 && (
