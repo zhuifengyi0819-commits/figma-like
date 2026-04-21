@@ -2,7 +2,7 @@
 
 import { useEditorStore } from '@/stores/useEditorStore';
 import { ToolType } from '@/lib/types';
-import { MousePointer2, Square, Circle, Type, Minus, Hand, Undo2, Redo2, Star, Triangle, ImagePlus, Frame, PenTool, ChevronDown, Ruler, Pipette } from 'lucide-react';
+import { MousePointer2, Square, Circle, Type, Minus, Hand, Undo2, Redo2, Star, Triangle, ImagePlus, Frame, PenTool, ChevronDown, Ruler, Pipette, Pencil } from 'lucide-react';
 import { fileToDataUrl, getImageDimensions } from '@/lib/hooks';
 import { useState, useRef, useEffect, useCallback } from 'react';
 
@@ -37,6 +37,7 @@ const tools: { id: ToolType; icon: React.ReactNode; label: string; shortcut: str
   { id: 'star', icon: <Star size={18} />, label: '星形', shortcut: '★' },
   { id: 'line', icon: <Minus size={18} />, label: '线条', shortcut: 'L' },
   { id: 'pen', icon: <PenTool size={18} />, label: '钢笔', shortcut: 'P' },
+  { id: 'pencil', icon: <Pencil size={18} />, label: '铅笔', shortcut: 'N' },
   { id: 'text', icon: <Type size={18} />, label: '文本', shortcut: 'T' },
 ];
 

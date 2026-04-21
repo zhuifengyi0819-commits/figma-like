@@ -1,5 +1,5 @@
 export type ShapeType = 'rect' | 'circle' | 'text' | 'line' | 'image' | 'star' | 'arrow' | 'triangle' | 'component' | 'frame' | 'group' | 'path';
-export type ToolType = 'select' | 'rect' | 'circle' | 'text' | 'line' | 'hand' | 'star' | 'triangle' | 'image' | 'frame' | 'pen' | 'measure' | 'eyedropper';
+export type ToolType = 'select' | 'rect' | 'circle' | 'text' | 'line' | 'hand' | 'star' | 'triangle' | 'image' | 'frame' | 'pen' | 'pencil' | 'measure' | 'eyedropper';
 
 export interface Shadow {
   color: string;
@@ -231,6 +231,9 @@ export interface Shape {
 
   // Layout grid (frames only)
   layoutGrids?: LayoutGrid[];
+
+  // Overflow scroll behavior (frames only, for prototype player)
+  overflow?: 'visible' | 'hidden' | 'scroll' | 'auto';
 
   /** 预留：蒙版 / 布尔（尚无渲染逻辑） */
   maskSourceId?: string;

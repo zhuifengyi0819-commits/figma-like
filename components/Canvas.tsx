@@ -778,14 +778,14 @@ function FrameRenderer({
         return result;
       })()}
       {/* Layout Grid overlay — flat list so Konva/React children stay valid */}
-      {isSelected && frame.layoutGrids?.filter(g => g.visible).flatMap((g, gi) => {
+      {frame.layoutGrids?.filter(g => g.visible).flatMap((g, gi) => {
         const rects: React.ReactNode[] = [];
         if (g.type === 'columns' || g.type === 'grid') {
           const totalGutter = (g.count - 1) * g.gutterSize;
           const colW = (fw - g.margin * 2 - totalGutter) / g.count;
           for (let c = 0; c < g.count; c++) {
             rects.push(
-              <Rect key={`gc-${gi}-${c}`} x={g.margin + c * (colW + g.gutterSize)} y={0} width={colW} height={fh} fill={g.color} listening={false} />
+              <Rect key={`gc-${gi}-${c}`} x={g.margin + c * (colW + g.gutterSize)} y={0} width={colW} height={fh} fill={g.color} opacity={0.12} listening={false} />
             );
           }
         }
@@ -794,7 +794,7 @@ function FrameRenderer({
           const rowH = (fh - g.margin * 2 - totalGutter) / g.count;
           for (let r = 0; r < g.count; r++) {
             rects.push(
-              <Rect key={`gr-${gi}-${r}`} x={0} y={g.margin + r * (rowH + g.gutterSize)} width={fw} height={rowH} fill={g.color} listening={false} />
+              <Rect key={`gr-${gi}-${r}`} x={0} y={g.margin + r * (rowH + g.gutterSize)} width={fw} height={rowH} fill={g.color} opacity={0.12} listening={false} />
             );
           }
         }
@@ -889,6 +889,11 @@ export default function Canvas({ width, height }: CanvasProps) {
   const [penDragging, setPenDragging] = useState(false);
   const penDragStart = useRef<{ x: number; y: number } | null>(null);
   const penAltRef = useRef(false);
+
+  // Pencil (freehand) tool state
+  const [pencilPoints, setPencilPoints] = useState<{ x: number; y: number }[]>([]);
+  const [pencilPreview, setPencilPreview] = useState<{ x: number; y: number } | null>(null);
+  const isPencilDrawing = useRef(false);
 
   // Measure: Alt+hover or 测量工具 + 单选作为参考
   const [measureLines, setMeasureLines] = useState<{ x1: number; y1: number; x2: number; y2: number; dist: number; label?: string }[]>([]);
@@ -999,6 +1004,57 @@ export default function Canvas({ width, height }: CanvasProps) {
     penDragStart.current = null;
     setActiveTool('select');
   }, [penPoints, addShape, setSelectedIds, setActiveTool]);
+
+  // Finish pencil (freehand) drawing — convert points to a smooth path
+  const finishPencilPath = useCallback((pts: { x: number; y: number }[]) => {
+    if (pts.length < 2) { setPencilPoints([]); setPencilPreview(null); return; }
+
+    // Simplify points using Douglas-Peucker-like sampling to reduce noise
+    // Keep every Nth point based on distance threshold
+    const MIN_DIST = 4;
+    const simplified: { x: number; y: number }[] = [pts[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const prev = simplified[simplified.length - 1];
+      const curr = pts[i];
+      const dx = curr.x - prev.x, dy = curr.y - prev.y;
+      if (Math.sqrt(dx * dx + dy * dy) >= MIN_DIST) {
+        simplified.push(curr);
+      }
+    }
+    simplified.push(pts[pts.length - 1]);
+
+    // Convert to pathPoints with handles (straight lines for freehand, no curves)
+    const pathPts = simplified.map(p => ({ x: p.x, y: p.y }));
+    const firstPt = simplified[0];
+    const lastPt = simplified[simplified.length - 1];
+    const bounds = {
+      minX: Math.min(...simplified.map(p => p.x)),
+      minY: Math.min(...simplified.map(p => p.y)),
+      maxX: Math.max(...simplified.map(p => p.x)),
+      maxY: Math.max(...simplified.map(p => p.y)),
+    };
+
+    // Normalize to start at (0, 0) for the shape
+    const normalizedPts = pathPts.map(p => ({ x: p.x - bounds.minX, y: p.y - bounds.minY }));
+
+    const id = addShape({
+      type: 'path',
+      x: bounds.minX,
+      y: bounds.minY,
+      pathPoints: normalizedPts,
+      closePath: false,
+      fill: 'transparent',
+      stroke: '#D4A853',
+      strokeWidth: 2,
+      opacity: 1, rotation: 0, visible: true, locked: false,
+      name: '',
+    });
+    setSelectedIds([id]);
+    setPencilPoints([]);
+    setPencilPreview(null);
+    isPencilDrawing.current = false;
+    setActiveTool('select');
+  }, [addShape, setSelectedIds, setActiveTool]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1132,6 +1188,7 @@ export default function Canvas({ width, height }: CanvasProps) {
       else if (e.key === 'h' || e.key === 'H') setActiveTool('hand');
       else if (e.key === 'f' || e.key === 'F') setActiveTool('frame');
       else if (e.key === 'p' || e.key === 'P') setActiveTool('pen');
+      else if (e.key === 'n' || e.key === 'N') setActiveTool('pencil');
       else if (e.key === 'm' || e.key === 'M') setActiveTool('measure');
       else if (e.key === 'i' || e.key === 'I') setActiveTool('eyedropper');
       else if (e.key === 'Enter' && penPoints.length >= 2) {
@@ -1492,6 +1549,15 @@ export default function Canvas({ width, height }: CanvasProps) {
       return;
     }
 
+    // Pencil tool — start freehand drawing
+    if (activeTool === 'pencil' && isStage) {
+      const pt = getCanvasPoint();
+      isPencilDrawing.current = true;
+      setPencilPoints([pt]);
+      setPencilPreview(null);
+      return;
+    }
+
     if (activeTool === 'select' && isStage) {
       const pt = getCanvasPoint();
       rubberBandStart.current = pt;
@@ -1590,6 +1656,15 @@ export default function Canvas({ width, height }: CanvasProps) {
         return;
       }
     }
+
+    // Pencil tool: record points while drawing
+    if (activeTool === 'pencil' && isPencilDrawing.current) {
+      const pt = getCanvasPoint();
+      setPencilPoints(prev => [...prev, pt]);
+      setPencilPreview(pt);
+      return;
+    }
+
     if (rubberBandStart.current) {
       const pt = getCanvasPoint();
       const rb = {
@@ -1699,8 +1774,19 @@ export default function Canvas({ width, height }: CanvasProps) {
       else if (activeTool === 'text') { id = addShape({ ...base, type: 'text', x, y, text: '双击编辑', fontSize: 24, width: Math.max(100, w), fill: '#E8E4DF', stroke: 'transparent', strokeWidth: 0 }); }
       if (id) { setSelectedIds([id]); setActiveTool('select'); }
     }
+
+    // Pencil tool: finish freehand drawing
+    if (activeTool === 'pencil' && isPencilDrawing.current && pencilPoints.length >= 2) {
+      finishPencilPath(pencilPoints);
+      return;
+    }
+    if (activeTool === 'pencil') {
+      isPencilDrawing.current = false;
+      setPencilPoints([]);
+      setPencilPreview(null);
+    }
     setIsDrawing(false); setDrawStart(null); setDrawPreview(null);
-  }, [isDrawing, drawStart, drawPreview, activeTool, addShape, setSelectedIds, setActiveTool, rubberBand, penDragging, findParentFrame, spacePressed]);
+  }, [isDrawing, drawStart, drawPreview, activeTool, addShape, setSelectedIds, setActiveTool, rubberBand, penDragging, findParentFrame, spacePressed, pencilPoints, finishPencilPath]);
 
   const handleDblClickText = useCallback((id: string) => {
     const shape = shapes.find(s => s.id === id);
@@ -1925,6 +2011,18 @@ export default function Canvas({ width, height }: CanvasProps) {
           {penPoints.map((pt, i) => (
             <Circle key={`pen-pt-${i}`} x={pt.x} y={pt.y} radius={4} fill={i === 0 ? '#6495ED' : '#D4A853'} stroke="#fff" strokeWidth={1} listening={false} />
           ))}
+          {/* Pencil tool preview (freehand drawing in progress) */}
+          {pencilPoints.length > 1 && (
+            <Line
+              points={pencilPoints.flatMap(p => [p.x, p.y])}
+              stroke="#D4A853"
+              strokeWidth={2}
+              fill="transparent"
+              listening={false}
+              lineCap="round"
+              lineJoin="round"
+            />
+          )}
           {/* Bezier control point handles */}
           {penPoints.map((pt, i) => {
             const handles: React.ReactNode[] = [];
