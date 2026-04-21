@@ -465,7 +465,6 @@ export class EditorEngine {
    * Returns the new node ID.
    */
   duplicateNode(sourceId: string, x: number, y: number): string | null {
-    // Get the Shape from store (Canvas always has store access)
     const { shapes } = useEditorStore.getState();
     const source = shapes.find(s => s.id === sourceId);
     if (!source) return null;
@@ -478,13 +477,15 @@ export class EditorEngine {
       y,
     });
 
-    // Sync the new node to SceneGraph so engines see it
+    // Sync the new node to SceneGraph so engines see it immediately
+    // Note: duplicateCommand.undo() handles removing from SceneGraph
     const newShape = useEditorStore.getState().shapes.find(s => s.id === newId);
     if (newShape) {
       syncShapesToSceneGraph([newShape], this.sceneGraph);
     }
 
     // Record in history so this duplication can be undone/redone
+    // Use duplicateCommand with idempotent execute (hasNode check in execute)
     const newIdMap = new Map([[sourceId, newId]]);
     const cmd = this.history.duplicateCommand(
       [sourceId],

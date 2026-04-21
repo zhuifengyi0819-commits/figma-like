@@ -224,6 +224,8 @@ export class HistoryManager {
       name,
       execute: () => {
         for (const [srcId, newId] of newIdMap) {
+          // Skip if already exists (idempotent — prevents double-add when called after syncShapesToSceneGraph)
+          if (this.sceneGraph.hasNode(newId)) continue;
           const src = sourceSnapshots.get(srcId);
           if (!src) continue;
           const dup = { ...src, id: newId } as any;
