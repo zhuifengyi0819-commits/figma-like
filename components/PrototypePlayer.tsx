@@ -514,7 +514,13 @@ export default function PrototypePlayer() {
               const cr = currentFrame?.cornerRadius;
               return cr ? (typeof cr === 'number' ? cr : cr[0]) : 0;
             })(),
-            overflow: currentFrame && containerClipOverflow(currentFrame) ? 'hidden' : undefined,
+            overflow: currentFrame
+              ? currentFrame.overflow === 'scroll' || currentFrame.overflow === 'auto'
+                ? 'auto'
+                : currentFrame.overflow === 'hidden' || containerClipOverflow(currentFrame)
+                  ? 'hidden'
+                  : 'visible'
+              : undefined,
             transition: transitioning ? `opacity 0.3s ${getEasingCss('easeOut')}` : undefined,
           }}
         >

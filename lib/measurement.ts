@@ -84,8 +84,12 @@ export function isLayoutContainer(s: Shape): boolean {
   return s.type === 'frame' || s.type === 'group';
 }
 
-/** Frame defaults to clip children; group clips only when clipContent is explicitly true (matches Canvas). */
+/** Frame defaults to clip children; group clips only when clipContent is explicitly true (matches Canvas).
+ *  Also respects the explicit overflow property: 'hidden' = clip, 'scroll'/'auto' = scrollable, 'visible' = no clip.
+ */
 export function containerClipOverflow(s: Shape): boolean {
+  if (s.overflow === 'hidden') return true;
+  if (s.overflow === 'scroll' || s.overflow === 'auto') return false;
   if (s.type === 'group') return s.clipContent === true;
   return s.clipContent !== false;
 }
