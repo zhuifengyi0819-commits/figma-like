@@ -531,7 +531,7 @@ export const useEditorStore = create<EditorState>()(
         const style: Partial<Shape> = {
           fill: shape.fill, stroke: shape.stroke, strokeWidth: shape.strokeWidth,
           opacity: shape.opacity, cornerRadius: shape.cornerRadius,
-          gradient: shape.gradient, fills: shape.fills, shadows: shape.shadows, shadow: shape.shadow,
+          gradient: shape.gradient, fills: shape.fills, strokes: shape.strokes, shadows: shape.shadows, shadow: shape.shadow,
           strokeDash: shape.strokeDash,
         };
         if (shape.type === 'text') {

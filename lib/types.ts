@@ -16,6 +16,13 @@ export interface Fill {
   visible?: boolean;
 }
 
+export interface Stroke {
+  color: string;
+  width: number;
+  opacity?: number;
+  style?: 'solid' | 'dashed';
+}
+
 export interface AutoLayout {
   direction: 'horizontal' | 'vertical';
   gap: number;
@@ -181,7 +188,7 @@ export interface Shape {
   visible: boolean;
   locked: boolean;
   name: string;
-  cornerRadius?: number;
+  cornerRadius?: number | [number, number, number, number];
   shadow?: Shadow;
   src?: string;
   innerRadius?: number;
@@ -227,6 +234,7 @@ export interface Shape {
   booleanSourceIds?: [string, string]; // [基准图形ID, 操作图形ID] (布尔运算结果专用)
 
   fills?: Fill[];
+  strokes?: Stroke[];
   shadows?: Shadow[];
 
   // Component/Instance system

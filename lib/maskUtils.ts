@@ -60,9 +60,10 @@ export function getClipFunc(maskSource: Shape): (ctx: CanvasRenderingContext2D) 
         const w = maskSource.width || 100;
         const h = maskSource.height || 100;
         const r = maskSource.cornerRadius || 0;
-        if (r > 0) {
+        const radius = typeof r === 'number' ? r : r[0];
+        if (radius > 0) {
           // Rounded rectangle
-          const rad = Math.min(r, Math.min(w, h) / 2);
+          const rad = Math.min(radius, Math.min(w, h) / 2);
           ctx.beginPath();
           ctx.moveTo(x + rad, y);
           ctx.lineTo(x + w - rad, y);

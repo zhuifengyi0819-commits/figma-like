@@ -1,7 +1,7 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape, Shadow, Gradient, Fill, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, TokenBindings, ConstraintAxis, OverlayConfig, ComponentStateType } from '@/lib/types';
+import { Shape, Shadow, Gradient, Fill, Stroke, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, TokenBindings, ConstraintAxis, OverlayConfig, ComponentStateType } from '@/lib/types';
 import {
   ArrowUp, ArrowDown, Trash2, Copy, Move, Plus,
   AlignLeft, AlignCenterHorizontal, AlignRight,
@@ -935,6 +935,9 @@ export default function PropertiesPanel() {
                   (() => {
                     const crBinding = single.tokenBindings?.cornerRadius;
                     const boundToken = crBinding ? (themes.find(t => t.id === activeThemeId)?.tokens.find(tok => tok.id === crBinding) ?? null) : null;
+                    const cr = single.cornerRadius ?? 0;
+                    const isArray = Array.isArray(cr);
+                    const [crMode, setCrMode] = useState<'single' | 'four'>(isArray ? 'four' : 'single');
                     return (
                       <div className="relative">
                         {boundToken ? (
@@ -945,11 +948,69 @@ export default function PropertiesPanel() {
                             onUnbind={() => unbindToken(single.id, 'cornerRadius')}
                           />
                         ) : (
-                          <NumInput label="圆角" value={single.cornerRadius || 0} onChange={v => update({ cornerRadius: v })} suffix="px" min={0} max={200} />
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-[var(--text-tertiary)] flex-1">圆角</span>
+                              <button
+                                onClick={() => {
+                                  if (crMode === 'single') {
+                                    // Convert single to array
+                                    const v = typeof cr === 'number' ? cr : 0;
+                                    setCrMode('four');
+                                    update({ cornerRadius: [v, v, v, v] as [number, number, number, number] });
+                                  } else {
+                                    // Convert array to single (use first value)
+                                    const arr = Array.isArray(cr) ? cr : [0, 0, 0, 0];
+                                    setCrMode('single');
+                                    update({ cornerRadius: arr[0] });
+                                  }
+                                }}
+                                className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
+                                title={crMode === 'single' ? '切换为独立圆角' : '切换为统一圆角'}
+                              >
+                                {crMode === 'single' ? '⚏ 独立' : '☐ 统一'}
+                              </button>
+                            </div>
+                            {crMode === 'single' ? (
+                              <div className="relative">
+                                <NumInput
+                                  label=""
+                                  value={typeof cr === 'number' ? cr : 0}
+                                  onChange={v => update({ cornerRadius: v })}
+                                  suffix="px" min={0} max={200}
+                                />
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-4 gap-1">
+                                {(['tl', 'tr', 'br', 'bl'] as const).map((pos, idx) => {
+                                  const val = Array.isArray(cr) ? (cr[idx] ?? 0) : 0;
+                                  return (
+                                    <div key={pos} className="relative">
+                                      <input
+                                        type="number"
+                                        value={val}
+                                        min={0} max={200}
+                                        onChange={e => {
+                                          const arr = Array.isArray(cr) ? [...cr] : [0, 0, 0, 0];
+                                          arr[idx] = parseFloat(e.target.value) || 0;
+                                          update({ cornerRadius: arr as [number, number, number, number] });
+                                        }}
+                                        className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1 py-1 text-[10px] text-[var(--text-primary)] font-mono focus:border-[var(--accent)] focus:outline-none text-center"
+                                        title={pos === 'tl' ? '左上' : pos === 'tr' ? '右上' : pos === 'br' ? '右下' : '左下'}
+                                      />
+                                      <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[8px] text-[var(--text-tertiary)] pointer-events-none">
+                                        {pos === 'tl' ? '↖' : pos === 'tr' ? '↗' : pos === 'br' ? '↘' : '↙'}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
                         )}
                         <button
                           onClick={() => setTokenPickerFor(tokenPickerFor === 'cornerRadius' ? null : 'cornerRadius')}
-                          className={`absolute right-0 top-3 -translate-y-1/2 p-1 rounded transition-colors ${crBinding ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)] hover:text-[var(--accent)]'}`}
+                          className={`absolute right-0 top-0 p-1 rounded transition-colors ${crBinding ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)] hover:text-[var(--accent)]'}`}
                           title={crBinding ? '取消绑定' : '绑定 Token'}
                           aria-label={crBinding ? '取消绑定' : '绑定 Token'}
                         >
@@ -1430,40 +1491,111 @@ export default function PropertiesPanel() {
             {!isLine && single.type !== 'image' && (
               <Section title="描边">
                 {(() => {
-                  const strokeBinding = single.tokenBindings?.stroke;
-                  const boundToken = strokeBinding ? (themes.find(t => t.id === activeThemeId)?.tokens.find(tok => tok.id === strokeBinding) ?? null) : null;
+                  // Build effective strokes list
+                  const strokes = single.strokes && single.strokes.length > 0
+                    ? single.strokes
+                    : [{ color: single.stroke, width: single.strokeWidth, opacity: 1, style: 'solid' as const }];
                   return (
-                    <div className="relative">
-                      {boundToken ? (
-                        <TokenBoundIndicator
-                          tokenId={strokeBinding ?? ''}
-                          tokenName={String(boundToken.name ?? '')}
-                          tokenValue={boundToken.value ?? ''}
-                          onUnbind={() => unbindToken(single.id, 'stroke')}
-                        />
-                      ) : (
-                        <ColorPicker label="描边" value={single.stroke} onChange={v => update({ stroke: v })} />
-                      )}
+                    <>
+                      {strokes.map((s, i) => (
+                        <div key={i} className="space-y-2 pb-2 border-b border-[var(--border)] last:border-b-0">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-[var(--text-tertiary)]">描边 {strokes.length > 1 ? i + 1 : ''}</span>
+                            {strokes.length > 1 && (
+                              <button
+                                onClick={() => {
+                                  debouncedPushHistory();
+                                  selectedIds.forEach(id => {
+                                    const shape = shapes.find(s => s.id === id);
+                                    if (!shape) return;
+                                    const strokes = [...(shape.strokes || [{ color: shape.stroke, width: shape.strokeWidth, opacity: 1 }])];
+                                    strokes.splice(i, 1);
+                                    updateShape(id, { strokes });
+                                  });
+                                }}
+                                className="p-0.5 text-[var(--text-tertiary)] hover:text-[var(--danger)]"
+                                title="删除描边" aria-label="删除描边"
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            )}
+                          </div>
+                          <ColorPicker
+                            label="颜色"
+                            value={s.color}
+                            onChange={v => {
+                              debouncedPushHistory();
+                              selectedIds.forEach(id => {
+                                const shape = shapes.find(s => s.id === id);
+                                if (!shape) return;
+                                const strokes = [...(shape.strokes || [{ color: shape.stroke, width: shape.strokeWidth, opacity: 1 }])];
+                                if (!strokes[i]) return;
+                                strokes[i] = { ...strokes[i], color: v };
+                                if (i === 0) updateShape(id, { stroke: v, strokes });
+                                else updateShape(id, { strokes });
+                              });
+                            }}
+                          />
+                          <div className="grid grid-cols-3 gap-2">
+                            <NumInput
+                              label="宽度"
+                              value={s.width}
+                              onChange={v => {
+                                debouncedPushHistory();
+                                selectedIds.forEach(id => {
+                                  const shape = shapes.find(s => s.id === id);
+                                  if (!shape) return;
+                                  const strokes = [...(shape.strokes || [{ color: shape.stroke, width: shape.strokeWidth, opacity: 1 }])];
+                                  if (!strokes[i]) return;
+                                  strokes[i] = { ...strokes[i], width: v };
+                                  if (i === 0) updateShape(id, { strokeWidth: v, strokes });
+                                  else updateShape(id, { strokes });
+                                });
+                              }}
+                              suffix="px" min={0} max={20}
+                            />
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] text-[var(--text-tertiary)] uppercase tracking-wider">样式</label>
+                              <select
+                                value={s.style || 'solid'}
+                                onChange={e => {
+                                  debouncedPushHistory();
+                                  selectedIds.forEach(id => {
+                                    const shape = shapes.find(s => s.id === id);
+                                    if (!shape) return;
+                                    const strokes = [...(shape.strokes || [{ color: shape.stroke, width: shape.strokeWidth, opacity: 1 }])];
+                                    if (!strokes[i]) return;
+                                    strokes[i] = { ...strokes[i], style: e.target.value as 'solid' | 'dashed' };
+                                    updateShape(id, { strokes });
+                                  });
+                                }}
+                                className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1 py-1 text-[10px] text-[var(--text-primary)]"
+                              >
+                                <option value="solid">实线</option>
+                                <option value="dashed">虚线</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                       <button
-                        onClick={() => setTokenPickerFor(tokenPickerFor === 'stroke' ? null : 'stroke')}
-                        className={`absolute right-0 top-0 p-1 rounded transition-colors ${strokeBinding ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)] hover:text-[var(--accent)]'}`}
-                        title={strokeBinding ? '取消绑定' : '绑定 Token'}
-                        aria-label={strokeBinding ? '取消绑定' : '绑定 Token'}
+                        onClick={() => {
+                          debouncedPushHistory();
+                          selectedIds.forEach(id => {
+                            const shape = shapes.find(s => s.id === id);
+                            if (!shape) return;
+                            const strokes = [...(shape.strokes || [{ color: shape.stroke, width: shape.strokeWidth, opacity: 1 }])];
+                            strokes.push({ color: '#D4A853', width: 1, opacity: 1, style: 'solid' });
+                            updateShape(id, { strokes });
+                          });
+                        }}
+                        className="flex items-center gap-1 text-[10px] text-[var(--text-tertiary)] hover:text-[var(--accent)] transition-colors"
                       >
-                        <Link size={12} />
+                        <Plus size={11} /> 添加描边
                       </button>
-                      {tokenPickerFor === 'stroke' && (
-                        <TokenPicker
-                          property="stroke"
-                          currentTokenId={strokeBinding}
-                          onSelect={id => { bindToken(single.id, 'stroke', id); setTokenPickerFor(null); }}
-                          onClose={() => setTokenPickerFor(null)}
-                        />
-                      )}
-                    </div>
+                    </>
                   );
                 })()}
-                <NumInput label="描边宽度" value={single.strokeWidth} onChange={v => update({ strokeWidth: v })} suffix="px" min={0} max={20} />
               </Section>
             )}
 

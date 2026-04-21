@@ -131,7 +131,8 @@ export default function OverlayPanel({
       s.width = shape.width || 100;
       s.height = shape.height || 100;
       s.backgroundColor = shape.fill;
-      if (shape.cornerRadius) s.borderRadius = shape.cornerRadius;
+      const cr = shape.cornerRadius;
+      if (cr) s.borderRadius = typeof cr === 'number' ? cr : cr[0];
       if (shape.clipContent) s.overflow = 'hidden';
     } else if (shape.type === 'circle') {
       const d = (shape.radius || 50) * 2;
@@ -164,7 +165,10 @@ export default function OverlayPanel({
         style={{
           ...getPosition(),
           backgroundColor: targetFrame.fill || '#1A1A1D',
-          borderRadius: targetFrame.cornerRadius || 0,
+          borderRadius: (() => {
+            const cr = targetFrame.cornerRadius;
+            return cr ? (typeof cr === 'number' ? cr : cr[0]) : 0;
+          })(),
           overflow: targetFrame.clipContent ? 'hidden' : undefined,
           boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
         }}

@@ -12,7 +12,7 @@ import {
   computeAutoLayoutChildren,
   getShapeCanvasPosition,
 } from '@/lib/layout';
-import { BlendMode, CANVAS_HEIGHT, CANVAS_WIDTH, Gradient, PenPoint, Shape, TokenBindings, ComponentStateType, ShapeStateOverrides } from '@/lib/types';
+import { BlendMode, CANVAS_HEIGHT, CANVAS_WIDTH, Fill, Gradient, PenPoint, Shape, Stroke, TokenBindings, ComponentStateType, ShapeStateOverrides } from '@/lib/types';
 import { interpolateText } from '@/lib/variables';
 import { useEditorStore } from '@/stores/useEditorStore';
 import {
@@ -44,14 +44,14 @@ function resolveTokenBindings(shape: Shape): {
   fill: string;
   stroke: string;
   opacity: number;
-  cornerRadius: number;
+  cornerRadius: number | [number, number, number, number];
 } {
   const bindings = shape.tokenBindings || ({} as TokenBindings);
   return {
     fill: resolveTokenValue(bindings.fill) ?? shape.fill,
     stroke: resolveTokenValue(bindings.stroke) ?? shape.stroke,
     opacity: bindings.opacity ? parseFloat(resolveTokenValue(bindings.opacity) ?? '1') : shape.opacity,
-    cornerRadius: bindings.cornerRadius ? parseInt(resolveTokenValue(bindings.cornerRadius) ?? '0') : shape.cornerRadius ?? 0,
+    cornerRadius: bindings.cornerRadius ? parseInt(resolveTokenValue(bindings.cornerRadius) ?? '0') : (shape.cornerRadius ?? 0),
   };
 }
 
@@ -60,12 +60,12 @@ function resolveWithState(
   shape: Shape,
   currentState: ComponentStateType | undefined,
   stateOverrides: Shape['stateOverrides'],
-  baseTokens: { fill: string; stroke: string; opacity: number; cornerRadius: number }
+  baseTokens: { fill: string; stroke: string; opacity: number; cornerRadius: number | [number, number, number, number] }
 ): {
   fill: string;
   stroke: string;
   opacity: number;
-  cornerRadius: number;
+  cornerRadius: number | [number, number, number, number];
   scaleX: number;
   scaleY: number;
   text: string;
@@ -323,11 +323,86 @@ function ShapeRenderer({
   const selStrokeW = isSelected ? Math.max(shape.strokeWidth, 2) : shape.strokeWidth;
   const gradFill = (w: number, h: number) => shape.gradient ? { fill: undefined, ...gradientToKonvaFill(shape.gradient, w, h) } : {};
 
+  // Resolve cornerRadius: supports number | [tl, tr, br, bl]
+  const cr = resolvedWithState.cornerRadius;
+  const cornerRadius = Array.isArray(cr) ? cr : cr;
+
+  // Build effective fills list: use fills[] if present, fallback to legacy fill color
+  const effectiveFills = shape.fills && shape.fills.length > 0
+    ? shape.fills.filter(f => f.visible !== false)
+    : [{ type: 'solid' as const, color: resolvedWithState.fill, opacity: 1 }];
+
+  // Build effective strokes list: use strokes[] if present, fallback to legacy stroke
+  const effectiveStrokes = shape.strokes && shape.strokes.length > 0
+    ? shape.strokes
+    : [{ color: resolvedWithState.stroke, width: shape.strokeWidth, opacity: 1, style: shape.strokeDash ? 'dashed' as const : 'solid' as const }];
+
   switch (shape.type) {
     case 'rect':
     case 'frame': {
       const w = shape.width || 100, h = shape.height || 100;
-      return <Rect {...commonProps} width={w} height={h} fill={shape.gradient ? undefined : resolvedWithState.fill} stroke={selStroke} strokeWidth={selStrokeW} cornerRadius={resolvedWithState.cornerRadius} dash={shape.strokeDash} {...gradFill(w, h)} />;
+      // For multi-fill/stroke: render fills/strokes as layered Rects in a Group
+      if (effectiveFills.length > 1 || effectiveStrokes.length > 1) {
+        const fillRects = effectiveFills.map((f, idx) => {
+          const fColor = f.type === 'solid' ? (f.color || '#000000') : undefined;
+          const fOpacity = f.opacity ?? 1;
+          const grad = f.type !== 'solid' && f.gradient ? f.gradient : undefined;
+          if (idx === 0) {
+            // Base rect: has fill + first stroke
+            const firstStroke = effectiveStrokes[0];
+            return (
+              <Rect
+                key={`fill-${idx}`}
+                {...commonProps}
+                width={w}
+                height={h}
+                fill={grad ? undefined : fColor}
+                stroke={isSelected ? '#D4A853' : firstStroke.color}
+                strokeWidth={isSelected ? Math.max(firstStroke.width, 2) : firstStroke.width}
+                cornerRadius={cornerRadius}
+                dash={firstStroke.style === 'dashed' ? (shape.strokeDash || [5, 5]) : shape.strokeDash}
+                opacity={fOpacity * (resolvedWithState.opacity)}
+                {...(grad ? gradientToKonvaFill(grad, w, h) : {})}
+              />
+            );
+          }
+          // Overlay rect: fill only, no stroke
+          return (
+            <Rect
+              key={`fill-${idx}`}
+              {...commonProps}
+              width={w}
+              height={h}
+              fill={grad ? undefined : fColor}
+              stroke={undefined}
+              strokeWidth={0}
+              cornerRadius={cornerRadius}
+              opacity={fOpacity * (resolvedWithState.opacity)}
+              listening={false}
+              {...(grad ? gradientToKonvaFill(grad, w, h) : {})}
+            />
+          );
+        });
+        // Additional strokes (beyond first) rendered on top without fill
+        const strokeRects = effectiveStrokes.slice(1).map((s, idx) => (
+          <Rect
+            key={`stroke-${idx + 1}`}
+            {...commonProps}
+            width={w}
+            height={h}
+            fill={undefined}
+            stroke={isSelected ? '#D4A853' : s.color}
+            strokeWidth={isSelected ? Math.max(s.width, 2) : s.width}
+            cornerRadius={cornerRadius}
+            dash={s.style === 'dashed' ? (shape.strokeDash || [5, 5]) : shape.strokeDash}
+            opacity={s.opacity ?? 1}
+            listening={false}
+          />
+        ));
+        return <>{fillRects}{strokeRects}</>;
+      }
+      // Single fill/stroke: original behavior
+      return <Rect {...commonProps} width={w} height={h} fill={shape.gradient ? undefined : resolvedWithState.fill} stroke={selStroke} strokeWidth={selStrokeW} cornerRadius={cornerRadius} dash={shape.strokeDash} {...gradFill(w, h)} />;
     }
     case 'circle': {
       const r = shape.radius || 50;
@@ -527,7 +602,7 @@ function FrameRenderer({
         fill={frame.fill}
         stroke={isSelected ? '#D4A853' : frame.stroke}
         strokeWidth={isSelected ? 2 : frame.strokeWidth}
-        cornerRadius={frame.cornerRadius || 0}
+        cornerRadius={frame.cornerRadius ? (Array.isArray(frame.cornerRadius) ? frame.cornerRadius : frame.cornerRadius) : 0}
         dash={frame.strokeDash}
         listening={false}
         {...frameShadowProps}

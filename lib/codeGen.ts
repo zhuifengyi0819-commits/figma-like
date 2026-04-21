@@ -128,7 +128,15 @@ function imageToReact(shape: Shape): string {
   const style: Record<string, string | number> = {};
   if (shape.width) style.width = shape.width;
   if (shape.height) style.height = shape.height;
-  if (shape.cornerRadius) style.borderRadius = shape.cornerRadius;
+  if (shape.cornerRadius) {
+    const cr = shape.cornerRadius;
+    if (typeof cr === 'number') {
+      style.borderRadius = cr;
+    } else {
+      // CSS doesn't natively support per-corner radius, use first value as approximation
+      style.borderRadius = cr[0];
+    }
+  }
   if (shape.opacity < 1) style.opacity = shape.opacity;
   style.objectFit = 'cover';
 
@@ -196,7 +204,8 @@ function buildReactStyle(shape: Shape): Record<string, string | number> {
   }
 
   if ((shape.type === 'rect' || isFrameLike(shape)) && shape.cornerRadius) {
-    s.borderRadius = shape.cornerRadius;
+    const cr = shape.cornerRadius;
+    s.borderRadius = typeof cr === 'number' ? cr : cr[0];
   }
 
   if (shape.stroke && shape.stroke !== 'transparent' && shape.strokeWidth > 0) {
@@ -258,7 +267,8 @@ export function shapeToTailwind(shape: Shape): string {
   }
 
   if ((shape.type === 'rect' || isFrameLike(shape)) && shape.cornerRadius) {
-    const r = shape.cornerRadius;
+    const cr = shape.cornerRadius;
+    const r = typeof cr === 'number' ? cr : cr[0]; // use first corner for tailwind approximation
     if (r <= 2) cls.push('rounded-sm');
     else if (r <= 4) cls.push('rounded');
     else if (r <= 6) cls.push('rounded-md');

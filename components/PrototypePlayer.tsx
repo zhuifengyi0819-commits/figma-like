@@ -47,7 +47,8 @@ function resolveShapeStyle(shape: Shape): React.CSSProperties {
     s.width = shape.width || 100;
     s.height = shape.height || 100;
     s.backgroundColor = shape.fill;
-    if (shape.cornerRadius) s.borderRadius = shape.cornerRadius;
+    const cr = shape.cornerRadius;
+    if (cr) s.borderRadius = typeof cr === 'number' ? cr : cr[0];
     if (isLayoutContainer(shape) && containerClipOverflow(shape)) s.overflow = 'hidden';
   } else if (shape.type === 'circle') {
     const d = (shape.radius || 50) * 2;
@@ -509,7 +510,10 @@ export default function PrototypePlayer() {
             width: currentFrame?.width || 1920,
             height: currentFrame?.height || 1080,
             backgroundColor: currentFrame?.fill || '#1A1A1D',
-            borderRadius: currentFrame?.cornerRadius || 0,
+            borderRadius: (() => {
+              const cr = currentFrame?.cornerRadius;
+              return cr ? (typeof cr === 'number' ? cr : cr[0]) : 0;
+            })(),
             overflow: currentFrame && containerClipOverflow(currentFrame) ? 'hidden' : undefined,
             transition: transitioning ? `opacity 0.3s ${getEasingCss('easeOut')}` : undefined,
           }}
