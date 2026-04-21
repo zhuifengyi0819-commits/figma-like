@@ -168,8 +168,8 @@ export class HistoryManager {
   /** Command: resize/rotate a node */
   transformCommand(
     nodeId: string,
-    before: { x: number; y: number; width: number; height: number; rotation: number },
-    after: { x: number; y: number; width: number; height: number; rotation: number },
+    before: { x: number; y: number; width: number; height: number; rotation: number; scaleX?: number; scaleY?: number },
+    after: { x: number; y: number; width: number; height: number; rotation: number; scaleX?: number; scaleY?: number },
     name = 'Transform'
   ): Command {
     return {

@@ -1972,12 +1972,20 @@ export default function Canvas({ width, height }: CanvasProps) {
             }}
             onTransformEnd={(e) => {
               shiftRotationSnapRef.current = false;
-              // Commit transform to engine (which calls onShapesChange → store update → React re-render).
-              // Use e.target (the transformed node) position directly — more reliable than pointer
-              // which may not be over the node for resize operations.
+              // Commit transform to engine using Konva node's FULL final state.
+              // This ensures resize (width/height) and rotation are captured correctly.
               if (selectedIds.length === 1 && engineRef.current) {
                 const node = e.target;
-                engineRef.current.commitTransform(node.x(), node.y());
+                engineRef.current.commitTransformFromKonva(
+                  selectedIds[0],
+                  node.x(),
+                  node.y(),
+                  node.width(),
+                  node.height(),
+                  node.rotation(),
+                  node.scaleX(),
+                  node.scaleY()
+                );
               }
               // Clear snap guides
               setSnapLines([]);

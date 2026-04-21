@@ -317,7 +317,59 @@ export class EditorEngine {
   }
 
   /**
+   * Commit a transform for a Konva-based transform (Transformer handles visual update).
+   * Konva has already applied scaleX→1, width/height→final, so we just record the
+   * final bounds directly without recomputing from pointer position.
+   */
+  commitTransformFromKonva(
+    nodeId: string,
+    finalX: number,
+    finalY: number,
+    finalWidth: number,
+    finalHeight: number,
+    finalRotation: number,
+    finalScaleX: number,
+    finalScaleY: number
+  ): void {
+    if (!this.activeTransform) return;
+
+    const { nodeId: activeNodeId } = this.activeTransform;
+    const node = this.sceneGraph.getNode(activeNodeId);
+    if (!node) return;
+
+    // Before state: snapshot of node BEFORE this transform (from activeTransform.startBounds)
+    const before = {
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      rotation: node.rotation ?? 0,
+    };
+
+    // After state: what Konva visually shows now (from handleTransformEnd)
+    const after = {
+      x: finalX,
+      y: finalY,
+      width: finalWidth,
+      height: finalHeight,
+      rotation: finalRotation,
+    };
+
+    // Record in history for undo/redo (execute applies the command which is already done,
+    // but Command Pattern requires execute to be called so undo() works)
+    const cmd = this.history.transformCommand(activeNodeId, before, after, 'Transform');
+    this.history.execute(cmd);
+
+    this.activeTransform = null;
+    this.activeSnapResult = null;
+    this._activeSmartGuides = [];
+    this.events.onSmartGuides?.([]);
+    this.events.onShapesChange?.();
+  }
+
+  /**
    * Commit the current transform to history and scene graph.
+   * For pointer-driven transforms (drag/resize/rotate in progress).
    */
   commitTransform(finalX: number, finalY: number): void {
     if (!this.activeTransform) return;
