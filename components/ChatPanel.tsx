@@ -150,7 +150,10 @@ export default function ChatPanel() {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || isProcessing) return;
+    // 优先从 DOM 读取最新值（支持程序化设置后再发送的场景）
+    const domValue = textareaRef.current?.value ?? '';
+    const messageText = domValue.trim() || input.trim();
+    if (!messageText || isProcessing) return;
     if (!aiConfigured) {
       addToast('error', 'AI 助手暂未配置，请联系管理员配置 MINIMAX_API_KEY');
       return;
