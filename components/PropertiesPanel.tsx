@@ -1,7 +1,7 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape, Shadow, Gradient, Fill, Stroke, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, TokenBindings, ConstraintAxis, OverlayConfig, ComponentStateType } from '@/lib/types';
+import { Shape, Shadow, Gradient, Fill, Stroke, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, DesignTheme, TokenBindings, ConstraintAxis, OverlayConfig, ComponentStateType } from '@/lib/types';
 import {
   ArrowUp, ArrowDown, Trash2, Copy, Move, Plus, Eye, EyeOff,
   AlignLeft, AlignCenterHorizontal, AlignRight,
@@ -719,6 +719,115 @@ function ContainerSummary({ shape }: { shape: Shape }) {
   );
 }
 
+// ─── Corner Radius Editor ─────────────────────────────────────────────────────
+interface CornerRadiusEditorProps {
+  shape: Shape;
+  onUpdate: (updates: Partial<Shape>) => void;
+  themes: DesignTheme[];
+  activeThemeId: string;
+  onUnbindToken: (shapeId: string, property: keyof TokenBindings) => void;
+  onBindToken: (shapeId: string, property: keyof TokenBindings, tokenId: string) => void;
+  tokenPickerFor: keyof TokenBindings | null;
+  onTokenPickerForChange: (v: keyof TokenBindings | null) => void;
+}
+
+function CornerRadiusEditor({ shape, onUpdate, themes, activeThemeId, onUnbindToken, onBindToken, tokenPickerFor, onTokenPickerForChange }: CornerRadiusEditorProps) {
+  const crBinding = shape.tokenBindings?.cornerRadius;
+  const boundToken = crBinding ? (themes.find(t => t.id === activeThemeId)?.tokens.find((tok: DesignToken) => tok.id === crBinding) ?? null) : null;
+  const cr = shape.cornerRadius ?? 0;
+  const isArray = Array.isArray(cr);
+  const [crMode, setCrMode] = useState<'single' | 'four'>(isArray ? 'four' : 'single');
+
+  return (
+    <div className="relative">
+      {boundToken ? (
+        <TokenBoundIndicator
+          tokenId={crBinding ?? ''}
+          tokenName={String(boundToken.name ?? '')}
+          tokenValue={boundToken.value ?? ''}
+          onUnbind={() => onUnbindToken(shape.id, 'cornerRadius')}
+        />
+      ) : (
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[var(--text-tertiary)] flex-1">圆角</span>
+            <button
+              onClick={() => {
+                if (crMode === 'single') {
+                  const v = typeof cr === 'number' ? cr : 0;
+                  setCrMode('four');
+                  onUpdate({ cornerRadius: [v, v, v, v] as [number, number, number, number] });
+                } else {
+                  const arr = Array.isArray(cr) ? cr : [0, 0, 0, 0];
+                  setCrMode('single');
+                  onUpdate({ cornerRadius: arr[0] });
+                }
+              }}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
+              title={crMode === 'single' ? '切换为独立圆角' : '切换为统一圆角'}
+            >
+              {crMode === 'single' ? '⚏ 独立' : '☐ 统一'}
+            </button>
+          </div>
+          {crMode === 'single' ? (
+            <div className="relative">
+              <NumInput
+                label=""
+                value={typeof cr === 'number' ? cr : 0}
+                onChange={v => onUpdate({ cornerRadius: v })}
+                suffix="px" min={0} max={200}
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-4 gap-1">
+              {(['tl', 'tr', 'br', 'bl'] as const).map((pos, idx) => {
+                const val = Array.isArray(cr) ? (cr[idx] ?? 0) : 0;
+                return (
+                  <div key={pos} className="relative">
+                    <input
+                      type="number"
+                      value={val}
+                      min={0} max={200}
+                      onChange={e => {
+                        const arr = Array.isArray(cr) ? [...cr] : [0, 0, 0, 0];
+                        arr[idx] = parseFloat(e.target.value) || 0;
+                        onUpdate({ cornerRadius: arr as [number, number, number, number] });
+                      }}
+                      className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1 py-1 text-[10px] text-[var(--text-primary)] font-mono focus:border-[var(--accent)] focus:outline-none text-center"
+                      title={pos === 'tl' ? '左上' : pos === 'tr' ? '右上' : pos === 'br' ? '右下' : '左下'}
+                    />
+                    <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[8px] text-[var(--text-tertiary)] pointer-events-none">
+                      {pos === 'tl' ? '↖' : pos === 'tr' ? '↗' : pos === 'br' ? '↘' : '↙'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+      <button
+        onClick={() => onTokenPickerForChange(tokenPickerFor === 'cornerRadius' ? null : 'cornerRadius')}
+        className={`absolute right-0 top-0 p-1 rounded transition-colors ${crBinding ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)] hover:text-[var(--accent)]'}`}
+        title={crBinding ? '取消绑定' : '绑定 Token'}
+        aria-label={crBinding ? '取消绑定' : '绑定 Token'}
+      >
+        <Link size={12} />
+      </button>
+      {tokenPickerFor === 'cornerRadius' && (
+        <div className="absolute left-0 top-full mt-1 z-50">
+          <TokenPicker
+            property="cornerRadius"
+            currentTokenId={crBinding}
+            onSelect={id => { onBindToken(shape.id, 'cornerRadius', id); onTokenPickerForChange(null); }}
+            onClose={() => onTokenPickerForChange(null)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ComponentSection({ shape }: { shape: Shape }) {
   const { components, createComponent, createInstance, syncInstances, detachInstance, selectedIds } = useEditorStore();
   const [compName, setCompName] = useState('');
@@ -1066,103 +1175,16 @@ export default function PropertiesPanel() {
                   <NumInput label="H" value={Math.round(single.height || 0)} onChange={v => update({ height: v })} suffix="px" min={1} />
                 </div>
                 {(single.type === 'rect' || isFrame) && (
-                  (() => {
-                    const crBinding = single.tokenBindings?.cornerRadius;
-                    const boundToken = crBinding ? (themes.find(t => t.id === activeThemeId)?.tokens.find(tok => tok.id === crBinding) ?? null) : null;
-                    const cr = single.cornerRadius ?? 0;
-                    const isArray = Array.isArray(cr);
-                    const [crMode, setCrMode] = useState<'single' | 'four'>(isArray ? 'four' : 'single');
-                    return (
-                      <div className="relative">
-                        {boundToken ? (
-                          <TokenBoundIndicator
-                            tokenId={crBinding ?? ''}
-                            tokenName={String(boundToken.name ?? '')}
-                            tokenValue={boundToken.value ?? ''}
-                            onUnbind={() => unbindToken(single.id, 'cornerRadius')}
-                          />
-                        ) : (
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] text-[var(--text-tertiary)] flex-1">圆角</span>
-                              <button
-                                onClick={() => {
-                                  if (crMode === 'single') {
-                                    // Convert single to array
-                                    const v = typeof cr === 'number' ? cr : 0;
-                                    setCrMode('four');
-                                    update({ cornerRadius: [v, v, v, v] as [number, number, number, number] });
-                                  } else {
-                                    // Convert array to single (use first value)
-                                    const arr = Array.isArray(cr) ? cr : [0, 0, 0, 0];
-                                    setCrMode('single');
-                                    update({ cornerRadius: arr[0] });
-                                  }
-                                }}
-                                className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
-                                title={crMode === 'single' ? '切换为独立圆角' : '切换为统一圆角'}
-                              >
-                                {crMode === 'single' ? '⚏ 独立' : '☐ 统一'}
-                              </button>
-                            </div>
-                            {crMode === 'single' ? (
-                              <div className="relative">
-                                <NumInput
-                                  label=""
-                                  value={typeof cr === 'number' ? cr : 0}
-                                  onChange={v => update({ cornerRadius: v })}
-                                  suffix="px" min={0} max={200}
-                                />
-                              </div>
-                            ) : (
-                              <div className="grid grid-cols-4 gap-1">
-                                {(['tl', 'tr', 'br', 'bl'] as const).map((pos, idx) => {
-                                  const val = Array.isArray(cr) ? (cr[idx] ?? 0) : 0;
-                                  return (
-                                    <div key={pos} className="relative">
-                                      <input
-                                        type="number"
-                                        value={val}
-                                        min={0} max={200}
-                                        onChange={e => {
-                                          const arr = Array.isArray(cr) ? [...cr] : [0, 0, 0, 0];
-                                          arr[idx] = parseFloat(e.target.value) || 0;
-                                          update({ cornerRadius: arr as [number, number, number, number] });
-                                        }}
-                                        className="w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded px-1 py-1 text-[10px] text-[var(--text-primary)] font-mono focus:border-[var(--accent)] focus:outline-none text-center"
-                                        title={pos === 'tl' ? '左上' : pos === 'tr' ? '右上' : pos === 'br' ? '右下' : '左下'}
-                                      />
-                                      <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[8px] text-[var(--text-tertiary)] pointer-events-none">
-                                        {pos === 'tl' ? '↖' : pos === 'tr' ? '↗' : pos === 'br' ? '↘' : '↙'}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        <button
-                          onClick={() => setTokenPickerFor(tokenPickerFor === 'cornerRadius' ? null : 'cornerRadius')}
-                          className={`absolute right-0 top-0 p-1 rounded transition-colors ${crBinding ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)] hover:text-[var(--accent)]'}`}
-                          title={crBinding ? '取消绑定' : '绑定 Token'}
-                          aria-label={crBinding ? '取消绑定' : '绑定 Token'}
-                        >
-                          <Link size={12} />
-                        </button>
-                        {tokenPickerFor === 'cornerRadius' && (
-                          <div className="absolute left-0 top-full mt-1 z-50">
-                            <TokenPicker
-                              property="cornerRadius"
-                              currentTokenId={crBinding}
-                              onSelect={id => { bindToken(single.id, 'cornerRadius', id); setTokenPickerFor(null); }}
-                              onClose={() => setTokenPickerFor(null)}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()
+                  <CornerRadiusEditor
+                    shape={single}
+                    onUpdate={update}
+                    themes={themes}
+                    activeThemeId={activeThemeId}
+                    onUnbindToken={unbindToken}
+                    onBindToken={bindToken}
+                    tokenPickerFor={tokenPickerFor}
+                    onTokenPickerForChange={setTokenPickerFor}
+                  />
                 )}
                 {isFrame && (
                   <div className="flex items-center gap-2 pt-1">
