@@ -168,11 +168,36 @@ function shapeToSvgElement(shape: Shape, allShapes: Shape[], defs: string[], idC
     }
     case 'circle': {
       const r = shape.radius || 50;
-      const fill = shape.gradient ? (() => { const g = shape.gradient!; const gid = `grad-${idCounter.n++}`; defs.push(gradientToSvgDefs(g, gid)); return `url(#${gid})`; })() : (shape.fill === 'transparent' ? 'none' : shape.fill);
-      const stroke = shape.stroke === 'transparent' ? 'none' : shape.stroke;
-      const sw = shape.strokeWidth;
-      const dash = shape.strokeDash ? `stroke-dasharray="${shape.strokeDash.join(' ')}"` : '';
-      return `<circle cx="${shape.x}" cy="${shape.y}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" ${dash} ${commonAttrs.join(' ')} ${txStr} />`;
+      // Build multi-stroke: each stroke renders as concentric circle
+      const strokes = shape.strokes && shape.strokes.length > 0
+        ? shape.strokes.filter(s => {
+          const c = s.color;
+          return c !== 'transparent' && c !== 'none';
+        })
+        : (shape.stroke && shape.stroke !== 'transparent'
+            ? [{ color: shape.stroke, width: shape.strokeWidth ?? 1, style: shape.strokeDash ? 'dashed' : 'solid', opacity: 1 }]
+            : []);
+      const fills = shape.fills && shape.fills.length > 0
+        ? shape.fills.filter(f => f.visible !== false)
+        : [{ type: 'solid' as const, color: shape.fill || '#3D3D45' }];
+
+      const fillColorStr = fillColor(fills[0], defs, idCounter);
+      const fillGrad = fills[0].type !== 'solid' && fills[0].gradient
+        ? (() => { const gid = `grad-${idCounter.n++}`; defs.push(gradientToSvgDefs(fills[0].gradient!, gid)); return `url(#${gid})`; })()
+        : undefined;
+
+      if (strokes.length <= 1) {
+        const stroke = strokes[0] ? strokeAttrs(strokes[0], defs, idCounter) : 'stroke="none"';
+        return `<circle cx="${shape.x}" cy="${shape.y}" r="${r}" fill="${fillGrad || fillColorStr}" ${stroke} ${commonAttrs.join(' ')} ${txStr} />`;
+      }
+      // Multi-stroke: multiple concentric circles
+      const circles: string[] = [];
+      for (let si = 0; si < strokes.length; si++) {
+        const s = strokes[si];
+        const strokeAttr = strokeAttrs(s, defs, idCounter);
+        circles.push(`<circle cx="${shape.x}" cy="${shape.y}" r="${r}" fill="${si === 0 ? (fillGrad || fillColorStr) : 'none'}" ${strokeAttr} ${commonAttrs.join(' ')} ${txStr} />`);
+      }
+      return circles.join('');
     }
     case 'text': {
       const style = [

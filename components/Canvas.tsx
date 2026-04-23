@@ -418,6 +418,57 @@ function ShapeRenderer({
     }
     case 'circle': {
       const r = shape.radius || 50;
+      // Multi-stroke: each stroke renders as concentric circle, fills layered
+      if (effectiveStrokes.length > 1 || effectiveFills.length > 1) {
+        const fillCircles = effectiveFills.map((f, idx) => {
+          const fColor = f.type === 'solid' ? (f.color || '#000000') : undefined;
+          const fOpacity = f.opacity ?? 1;
+          const grad = f.type !== 'solid' && f.gradient ? f.gradient : undefined;
+          if (idx === 0) {
+            const firstStroke = effectiveStrokes[0];
+            return (
+              <Circle
+                key={`fill-${idx}`}
+                {...commonProps}
+                radius={r}
+                fill={grad ? undefined : fColor}
+                stroke={isSelected ? '#D4A853' : firstStroke.color}
+                strokeWidth={isSelected ? Math.max(firstStroke.width, 2) : firstStroke.width}
+                opacity={(firstStroke.opacity ?? 1) * (resolvedWithState.opacity)}
+                dash={firstStroke.style === 'dashed' ? (shape.strokeDash || [5, 5]) : shape.strokeDash}
+                {...(grad ? gradientToKonvaFill(grad, r * 2, r * 2) : {})}
+              />
+            );
+          }
+          return (
+            <Circle
+              key={`fill-${idx}`}
+              {...commonProps}
+              radius={r}
+              fill={grad ? undefined : fColor}
+              stroke={undefined}
+              strokeWidth={0}
+              opacity={fOpacity * (resolvedWithState.opacity)}
+              listening={false}
+              {...(grad ? gradientToKonvaFill(grad, r * 2, r * 2) : {})}
+            />
+          );
+        });
+        const strokeCircles = effectiveStrokes.slice(1).map((s, idx) => (
+          <Circle
+            key={`stroke-${idx + 1}`}
+            {...commonProps}
+            radius={r}
+            fill={undefined}
+            stroke={isSelected ? '#D4A853' : s.color}
+            strokeWidth={isSelected ? Math.max(s.width, 2) : s.width}
+            opacity={s.opacity ?? 1}
+            dash={s.style === 'dashed' ? (shape.strokeDash || [5, 5]) : shape.strokeDash}
+            listening={false}
+          />
+        ));
+        return <>{fillCircles}{strokeCircles}</>;
+      }
       return <Circle {...commonProps} radius={r} fill={shape.gradient ? undefined : resolvedWithState.fill} stroke={selStroke} strokeWidth={selStrokeW} dash={shape.strokeDash} {...(shape.gradient ? gradientToKonvaFill(shape.gradient, r * 2, r * 2) : {})} />;
     }
     case 'text': {
