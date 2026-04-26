@@ -1627,8 +1627,17 @@ export default function Canvas({ width, height }: CanvasProps) {
         // Apply to selected shape's fill (or stroke with Alt)
         if (selectedIds.length > 0) {
           const target = e.evt.altKey ? 'stroke' : 'fill';
-          pushHistory();
-          selectedIds.forEach(id => updateShape(id, { [target]: hex }));
+          const engine = getEditorEngine();
+          if (engine) {
+            selectedIds.forEach(id => {
+              const cmd = engine.getHistoryManager().propertyCommand(id, target, null as any, hex, 'Eyedropper');
+              engine.executeCommand(cmd);
+            });
+            syncEditorFromStore();
+          } else {
+            pushHistory();
+            selectedIds.forEach(id => updateShape(id, { [target]: hex }));
+          }
         }
       };
       img.src = data;
@@ -1900,9 +1909,11 @@ export default function Canvas({ width, height }: CanvasProps) {
       if (engine) {
         const cmd = engine.getHistoryManager().propertyCommand(editingTextId, 'text' as any, originalText, newText, 'Edit Text');
         engine.executeCommand(cmd);
+        syncEditorFromStore();
       } else {
         pushHistory();
         updateShape(editingTextId, { text: newText });
+        syncEditorFromStore();
       }
     }
     setEditingTextId(null);

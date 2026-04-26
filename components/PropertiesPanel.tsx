@@ -2135,24 +2135,24 @@ export default function PropertiesPanel() {
 
             <Section title="对齐">
               <div className="grid grid-cols-6 gap-1">
-                <IconBtn icon={<AlignLeft size={14} />} label="左对齐" onClick={() => { pushHistory(); alignShapes(selectedIds, 'left'); }} />
-                <IconBtn icon={<AlignCenterHorizontal size={14} />} label="水平居中" onClick={() => { pushHistory(); alignShapes(selectedIds, 'centerH'); }} />
-                <IconBtn icon={<AlignRight size={14} />} label="右对齐" onClick={() => { pushHistory(); alignShapes(selectedIds, 'right'); }} />
-                <IconBtn icon={<AlignStartVertical size={14} />} label="顶对齐" onClick={() => { pushHistory(); alignShapes(selectedIds, 'top'); }} />
-                <IconBtn icon={<AlignCenterVertical size={14} />} label="垂直居中" onClick={() => { pushHistory(); alignShapes(selectedIds, 'centerV'); }} />
-                <IconBtn icon={<AlignEndVertical size={14} />} label="底对齐" onClick={() => { pushHistory(); alignShapes(selectedIds, 'bottom'); }} />
+                <IconBtn icon={<AlignLeft size={14} />} label="左对齐" onClick={() => alignShapes(selectedIds, 'left')} />
+                <IconBtn icon={<AlignCenterHorizontal size={14} />} label="水平居中" onClick={() => alignShapes(selectedIds, 'centerH')} />
+                <IconBtn icon={<AlignRight size={14} />} label="右对齐" onClick={() => alignShapes(selectedIds, 'right')} />
+                <IconBtn icon={<AlignStartVertical size={14} />} label="顶对齐" onClick={() => alignShapes(selectedIds, 'top')} />
+                <IconBtn icon={<AlignCenterVertical size={14} />} label="垂直居中" onClick={() => alignShapes(selectedIds, 'centerV')} />
+                <IconBtn icon={<AlignEndVertical size={14} />} label="底对齐" onClick={() => alignShapes(selectedIds, 'bottom')} />
               </div>
               {selected.length >= 3 && (
                 <div className="grid grid-cols-2 gap-1 mt-1">
                   <button
-                    onClick={() => { pushHistory(); alignShapes(selectedIds, 'distributeH'); }}
+                    onClick={() => alignShapes(selectedIds, 'distributeH')}
                     title="水平均布"
                     className="flex items-center justify-center gap-1 py-1.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] rounded transition-colors"
                   >
                     <AlignHorizontalSpaceBetween size={13} /> 水平均布
                   </button>
                   <button
-                    onClick={() => { pushHistory(); alignShapes(selectedIds, 'distributeV'); }}
+                    onClick={() => alignShapes(selectedIds, 'distributeV')}
                     title="垂直均布"
                     className="flex items-center justify-center gap-1 py-1.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] rounded transition-colors"
                   >
