@@ -917,6 +917,7 @@ export default function Canvas({ width, height }: CanvasProps) {
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const editingTextOriginalRef = useRef<string>('');
   const [textEditPosition, setTextEditPosition] = useState<{ x: number; y: number } | null>(null);
   const [textEditRotation, setTextEditRotation] = useState(0);
 
@@ -1869,6 +1870,7 @@ export default function Canvas({ width, height }: CanvasProps) {
   const handleDblClickText = useCallback((id: string) => {
     const shape = shapes.find(s => s.id === id);
     if (!shape || shape.type !== 'text') return;
+    editingTextOriginalRef.current = shape.text || '';
     setEditingTextId(id);
     setEditingText(shape.text || '');
     setSelectedIds([id]);
@@ -1884,8 +1886,18 @@ export default function Canvas({ width, height }: CanvasProps) {
 
   const commitTextEdit = useCallback(() => {
     if (!editingTextId) return;
-    pushHistory();
-    updateShape(editingTextId, { text: editingText });
+    const originalText = editingTextOriginalRef.current;
+    const newText = editingText;
+    if (newText !== originalText) {
+      const engine = getEditorEngine();
+      if (engine) {
+        const cmd = engine.getHistoryManager().propertyCommand(editingTextId, 'text' as any, originalText, newText, 'Edit Text');
+        engine.executeCommand(cmd);
+      } else {
+        pushHistory();
+        updateShape(editingTextId, { text: newText });
+      }
+    }
     setEditingTextId(null);
   }, [editingTextId, editingText, updateShape, pushHistory]);
 
