@@ -1131,6 +1131,7 @@ export const useEditorStore = create<EditorState>()(
       },
 
       alignShapes: (ids, alignment) => {
+        get().pushHistory();
         set(state => {
           const shapes = state.shapes;
           const selected = shapes.filter(s => ids.includes(s.id));

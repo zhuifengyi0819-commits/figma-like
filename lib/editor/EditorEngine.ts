@@ -523,6 +523,47 @@ export class EditorEngine {
     this.events.onShapesChange?.();
   }
 
+  /**
+   * Update a node property with undo/redo support via HistoryManager.
+   */
+  updateNodeProperty(nodeId: string, key: string, beforeValue: unknown, afterValue: unknown, name?: string): void {
+    const cmd = this.history.propertyCommand(nodeId, key, beforeValue, afterValue, name ?? 'Update Property');
+    this.history.execute(cmd);
+    this.events.onShapesChange?.();
+  }
+
+  /**
+   * Delete multiple nodes with undo/redo support.
+   */
+  deleteNodes(nodeIds: string[]): void {
+    if (nodeIds.length === 0) return;
+    const cmd = this.history.deleteCommand(nodeIds);
+    this.history.execute(cmd);
+    this.clearSelection();
+    this.events.onShapesChange?.();
+  }
+
+  /**
+   * Group multiple nodes with undo/redo support.
+   */
+  groupNodes(nodeIds: string[], groupId: string, parentId: string): void {
+    const cmd = this.history.groupCommand(nodeIds, groupId, parentId);
+    this.history.execute(cmd);
+    this.events.onSelectionChange?.(this.getState().selectedIds);
+    this.events.onShapesChange?.();
+  }
+
+  /**
+   * Ungroup (dissolve) a group with undo/redo support.
+   */
+  ungroupNodes(groupId: string, childrenIds: string[], parentId: string): void {
+    const groupIndex = this.sceneGraph.getIndexInParent(groupId);
+    const cmd = this.history.ungroupCommand(groupId, childrenIds, parentId, groupIndex >= 0 ? groupIndex : 0);
+    this.history.execute(cmd);
+    this.events.onSelectionChange?.(childrenIds);
+    this.events.onShapesChange?.();
+  }
+
   // ============================================================
   // Node Hit Testing (for canvas click detection)
   // ============================================================

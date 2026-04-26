@@ -1144,7 +1144,10 @@ export default function Canvas({ width, height }: CanvasProps) {
             setSelectedAnchorIdx(null);
           }
         } else {
-          e.preventDefault(); deleteShapes(selectedIds);
+          e.preventDefault();
+          const engine = getEditorEngine();
+          if (engine) engine.deleteNodes(selectedIds);
+          else deleteShapes(selectedIds);
         }
       }
       else if (e.key === 'Escape') {
@@ -1200,22 +1203,26 @@ export default function Canvas({ width, height }: CanvasProps) {
       // Figma: Cmd+[ — Send backward
       else if (mod && e.key === '[' && !e.shiftKey) {
         e.preventDefault();
-        if (selectedIds.length === 1) sendBackward(selectedIds[0]);
+        const engine = getEditorEngine();
+        if (engine) engine.sendBackward();
       }
       // Figma: Cmd+] — Bring forward
       else if (mod && e.key === ']' && !e.shiftKey) {
         e.preventDefault();
-        if (selectedIds.length === 1) bringForward(selectedIds[0]);
+        const engine = getEditorEngine();
+        if (engine) engine.bringForward();
       }
       // Figma: Cmd+Shift+[ — Send to back
       else if (mod && e.key === '[' && e.shiftKey) {
         e.preventDefault();
-        if (selectedIds.length === 1) sendToBack(selectedIds[0]);
+        const engine = getEditorEngine();
+        if (engine) engine.sendToBack();
       }
       // Figma: Cmd+Shift+] — Bring to front
       else if (mod && e.key === ']' && e.shiftKey) {
         e.preventDefault();
-        if (selectedIds.length === 1) bringToFront(selectedIds[0]);
+        const engine = getEditorEngine();
+        if (engine) engine.bringToFront();
       }
       // Figma: Cmd+Shift+L — Align left
       else if (mod && e.shiftKey && e.key.toLowerCase() === 'l') { e.preventDefault(); if (selectedIds.length > 0) alignShapes(selectedIds, 'left'); }

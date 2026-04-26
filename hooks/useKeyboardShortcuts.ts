@@ -75,16 +75,20 @@ export function useKeyboardShortcuts() {
 
     // Layer ordering
     km.on('bringFront', () => {
-      store.selectedIds.forEach(id => store.bringToFront(id));
+      const engine = getEditorEngine();
+      if (engine) engine.bringToFront();
     });
     km.on('sendBack', () => {
-      store.selectedIds.forEach(id => store.sendToBack(id));
+      const engine = getEditorEngine();
+      if (engine) engine.sendToBack();
     });
     km.on('bringForward', () => {
-      store.selectedIds.forEach(id => store.bringForward(id));
+      const engine = getEditorEngine();
+      if (engine) engine.bringForward();
     });
     km.on('sendBackward', () => {
-      store.selectedIds.forEach(id => store.sendBackward(id));
+      const engine = getEditorEngine();
+      if (engine) engine.sendBackward();
     });
 
     // View shortcuts
