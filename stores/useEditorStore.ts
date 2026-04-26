@@ -560,54 +560,6 @@ export const useEditorStore = create<EditorState>()(
         syncEditorFromStore();
       },
 
-      // Moves shape `id` to position `targetIndex` among its siblings (shapes with same parentId).
-      // targetIndex is relative to the sibling list (0 = first sibling).
-      reorderShape: (id, targetIndex) => {
-        const { shapes } = get();
-        const shape = shapes.find(s => s.id === id);
-        if (!shape) return;
-        const parentId = shape.parentId;
-        // All siblings including the shape itself, in array order
-        const siblings = shapes.filter(s => s.parentId === parentId);
-        const fromIdx = siblings.findIndex(s => s.id === id);
-        if (fromIdx === -1) return;
-        // Clamp target
-        const clampedTarget = Math.max(0, Math.min(targetIndex, siblings.length - 1));
-        if (fromIdx === clampedTarget) return;
-
-        get().pushHistory();
-        set(state => {
-          const ps = updatePageShapes(state.pages, state.activePageId, ss => {
-            // Build ordered list of sibling ids
-            const siblingIds = [...siblings.map(s => s.id)];
-            // Remove from current position
-            siblingIds.splice(fromIdx, 1);
-            // Insert at target position
-            siblingIds.splice(clampedTarget, 0, id);
-            // Now rebuild the full array: siblings appear in siblingIds order, others stay where they were
-            
-            // Interleave: for each sibling position, put the right sibling; non-siblings go between top-level items
-            // Strategy: start with non-siblings, insert siblings at their relative positions
-            // Better: keep non-siblings in place, reorder only the sibling block
-            const arr = [...ss];
-            // Find the flat indices of all siblings in the current array
-            const siblingFlatIndices = siblingIds
-              .map(sid => arr.findIndex(a => a.id === sid))
-              .filter(i => i !== -1)
-              .sort((a, b) => a - b);
-            if (siblingFlatIndices.length === 0) return ss;
-            // Extract sibling shapes in current array order
-            const currentSiblingShapes = siblingFlatIndices.map(i => arr[i]);
-            // Build new sibling order
-            const newSiblingOrder = siblingIds.map(sid => currentSiblingShapes.find(s => s.id === sid)!).filter(Boolean);
-            // Write back
-            siblingFlatIndices.forEach((fi, i) => { arr[fi] = newSiblingOrder[i]; });
-            return arr;
-          });
-          return { pages: ps.pages, shapes: ps.shapes };
-        });
-      },
-
       groupSelection: () => {
         const { selectedIds, shapes } = get();
         if (selectedIds.length < 2) return;
