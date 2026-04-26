@@ -1,301 +1,239 @@
-# AI Canvas — Personal Figma-Like Tool
+# AI Canvas — Figma-Like Editor
 
 ## 1. Concept & Vision
 
-**"Digital Workshop"** — A personal creative canvas that feels like a well-lit craftsman's workbench. Not cold and corporate, but warm and inviting — a tool you'd actually enjoy using daily. The interface blends the precision of professional design software with the warmth of a creative studio. Every interaction should feel intentional and responsive, as if the tool anticipates your intent.
+**"Digital Workshop"** — A personal creative canvas that feels like a well-lit craftsman's workbench. Not cold and corporate, but warm and inviting. Every interaction feels intentional and responsive.
+
+The architecture is built on a **SceneGraph as single source of truth**, with an **EditorEngine** that orchestrates all operations (selection, transform, snap, history). The Canvas renders from SceneGraph and routes all interactions through EditorEngine.
 
 ## 2. Design Language
 
-### Aesthetic Direction
-**Warm Industrial Workshop** — Deep charcoal foundations with amber/copper accents. The feel of a master craftsman's tools: precise, beautiful, purpose-built. Dark without being cold; technical without being sterile.
-
 ### Color Palette
 ```css
---bg-deep: #0D0D0F;           /* Deepest background */
---bg-surface: #151518;         /* Panel backgrounds */
---bg-elevated: #1C1C21;        /* Cards, inputs */
---bg-hover: #252529;           /* Hover states */
---border: #2A2A30;             /* Subtle borders */
---border-active: #3D3D45;      /* Active borders */
---text-primary: #E8E4DF;       /* Warm off-white */
---text-secondary: #8A8680;     /* Muted text */
---text-tertiary: #5C5A56;      /* Disabled/hint */
---accent: #D4A853;             /* Warm amber - primary accent */
---accent-hover: #E5B85C;       /* Amber hover */
---accent-muted: #8B7235;       /* Muted amber for backgrounds */
---success: #7CB77C;            /* Muted green */
---danger: #C75D5D;             /* Warm red */
---canvas-bg: #1A1A1D;          /* Canvas background */
---shape-stroke: #3A3A40;       /* Default shape stroke */
+--bg-deep: #0D0D0F;
+--bg-surface: #151518;
+--bg-elevated: #1C1C21;
+--bg-hover: #252529;
+--border: #2A2A30;
+--border-active: #3D3D45;
+--text-primary: #E8E4DF;
+--text-secondary: #8A8680;
+--text-tertiary: #5C5A56;
+--accent: #D4A853;
+--accent-hover: #E5B85C;
+--success: #7CB77C;
+--danger: #C75D5D;
+--canvas-bg: #1A1A1D;
 ```
 
 ### Typography
-- **Display/Headers**: "Instrument Sans" (Google Fonts) — modern, geometric, distinctive
-- **Body/UI**: "Instrument Sans" at various weights
-- **Monospace** (code, coordinates): "JetBrains Mono" — technical precision
-- Fallbacks: system-ui, -apple-system, sans-serif
+- **UI**: "Instrument Sans" (Google Fonts)
+- **Monospace**: "JetBrains Mono"
 
-### Spatial System
-- Base unit: 4px
-- Panel padding: 16px
-- Element spacing: 8px (tight), 12px (normal), 16px (loose)
-- Border radius: 6px (small), 8px (medium), 12px (large)
-- Subtle shadows with warm undertones
+### Motion
+- Micro-interactions: 150ms ease-out
+- Panel transitions: 200ms ease-out
+- Canvas zoom: smooth interpolation
 
-### Motion Philosophy
-- **Micro-interactions**: 150ms ease-out for hovers, state changes
-- **Panel transitions**: 200ms ease-out
-- **Canvas zoom**: smooth interpolation with momentum
-- **Shape selection**: immediate ring appear, 100ms scale pulse
-- **Chat messages**: slide-in from bottom, 200ms staggered
+## 3. Architecture
 
-### Visual Assets
-- **Icons**: Lucide React — consistent 1.5px stroke weight
-- **Decorative**: Subtle noise texture overlay on panels (5% opacity)
-- **Canvas grid**: Dot pattern, very subtle (#252525)
-
-## 3. Layout & Structure
-
-### Three-Panel Architecture
+### Data Flow (Single Source of Truth)
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  [Logo]  AI Canvas                          [?] [Settings]      │
-├──────────┬──────────────────────────────────────┬───────────────┤
-│          │                                      │               │
-│  LAYERS  │                                      │    CHAT       │
-│          │                                      │               │
-│  ──────  │                                      │  ───────────  │
-│  [list]  │         CANVAS                       │  [messages]  │
-│          │         (Konva Stage)                 │               │
-│          │                                      │  ───────────  │
-│          │                                      │  PROPERTIES   │
-│          │                                      │  (when shape  │
-│          │                                      │   selected)   │
-│          │                                      │               │
-├──────────┴──────────────────────────────────────┴───────────────┤
-│  Status: Ready          Zoom: 100%          Canvas: 1920×1080   │
-└─────────────────────────────────────────────────────────────────┘
+User Action
+    ↓
+Canvas.tsx (Konva interactions)
+    ↓
+EditorEngine.startMove() / startResize() / startRotate()
+    ↓
+TransformEngine + SnapEngine + HistoryManager
+    ↓
+SceneGraph (read/write nodes)
+    ↓
+onShapesChange → store._setPageShapes([...shapes])
+    ↓
+Canvas re-renders from store.shapes
 ```
 
-### Panel Dimensions
-- **Left (Layers)**: 240px fixed width
-- **Right (Chat + Properties)**: 320px fixed width
-- **Center (Canvas)**: Flexible, fills remaining space
-- **Header**: 48px height
-- **Footer/Status**: 32px height
+### Core Modules
 
-### Responsive Strategy
-- Minimum viewport: 1024×600
-- Below 1024px: collapse left panel to icon-only (48px)
-- Right panel always visible
+**SceneGraph** (`lib/scene-graph/`)
+- Tree structure with O(1) node lookup via Map
+- Node types: page, frame, group, rectangle, ellipse, text, line, polygon, star, pen, image, component, instance, boolean, sticky
+- Methods: addNode, removeNode, updateNode, reorderNode, getNode, getChildren, getDescendants, getAbsoluteTransform
 
-## 4. Features & Interactions
+**EditorEngine** (`lib/editor/`)
+- Single entry point for all editor operations
+- Owns: SelectionEngine, TransformEngine, SnapEngine, HistoryManager
+- API: select(), startMove(), updateTransform(), commitMove(), startResize(), commitResize(), startRotate(), commitRotate(), undo(), redo(), executeCommand()
 
-### Canvas (Core)
-- **Pan**: Space + drag, or middle-mouse drag
-- **Zoom**: Scroll wheel (centered on cursor), pinch on trackpad
-- **Select**: Click shape, shows selection ring (amber dashed border)
-- **Multi-select**: Shift + click
-- **Move**: Drag selected shape(s)
-- **Delete**: Backspace/Delete key on selected shapes
-- **Deselect**: Click empty canvas area or Escape
+**HistoryManager** (`lib/history/`)
+- Command Pattern: Move, Delete, Create, Resize, Rotate, Group, Reorder, PropertyChange
+- Undo/redo with 500ms merge window for continuous operations
 
-### Layers Panel (Left)
-- **List**: All shapes, newest at bottom (reverse of traditional layers)
-- **Item click**: Select corresponding shape on canvas
-- **Visibility toggle**: Eye icon per layer
-- **Lock toggle**: Lock icon per layer
-- **Hover state**: Shows quick actions (delete, duplicate)
-- **Active shape**: Highlighted with accent border
+**TransformEngine** (`lib/transform/`)
+- Move with Shift-constrain
+- Resize with 8 handles, Shift-aspect-ratio, Alt-center-pivot
+- Rotate with Shift-15° snapping
 
-### AI Chat (Right Top)
-- **Input**: Multi-line textarea, Shift+Enter for new line, Enter to send
-- **AI persona**: Helpful canvas assistant
-- **Message types**:
-  - User message: Right-aligned, accent background
-  - AI response: Left-aligned, surface background
-  - Tool call (shape added): Inline indicator
-- **Quick commands**: "/clear", "/export", "/grid 10"
-- **Context awareness**: AI knows canvas size, selected shapes
+**SelectionEngine** (`lib/selection/`)
+- Single select, multi-select (Shift), marquee select
+- enterContext() for double-click container editing
+- getSelectionBounds(), getSelectionCenter()
 
-### Properties Panel (Right Bottom)
-- Shown when shape is selected
-- **Position**: X, Y inputs (editable)
-- **Size**: W, H inputs (editable)
-- **Appearance**: Fill color, Stroke color, Stroke width
-- **Opacity**: Slider 0-100%
-- **Rotation**: Degree input
-- **Order**: Bring Forward, Send Backward buttons
+**SnapEngine** (`lib/snap/`)
+- Smart guides (alignment + spacing)
+- Edge/center snapping with threshold
 
-### Shape Creation
-- **AI command**: "Draw a blue circle in the center"
-- AI outputs JSON, system adds shape to canvas
-- Shape appears with subtle scale-in animation
-- Immediate selection after creation
+## 4. File Structure
 
-### Material/Favorites System
-- **Save**: Click star icon on selected shape
-- **Storage**: localStorage with named templates
-- **Use**: AI can reference "my saved button style"
+```
+/lib
+  /scene-graph
+    SceneGraph.ts      — Tree node management (814 lines)
+    types.ts           — All node types (358 lines)
+  /editor
+    EditorEngine.ts    — Central orchestrator (585 lines)
+    ShapeConverter.ts  — Shape ↔ SGNode bidirectional sync
+    types.ts
+  /selection
+    SelectionEngine.ts — Selection logic (349 lines)
+  /transform
+    TransformEngine.ts — Move/resize/rotate (297 lines)
+  /history
+    HistoryManager.ts  — Command pattern undo/redo (349 lines)
+  /snap
+    SnapEngine.ts      — Smart guide snapping
+  types.ts             — Legacy Shape type (for store compatibility)
+
+/stores
+  useEditorStore.ts    — Zustand store (shapes[], selectedIds, UI state)
+
+/hooks
+  useEditor.ts         — EditorEngine singleton + sync utilities
+  useKeyboardShortcuts.ts
+
+/components
+  Canvas.tsx           — Konva Stage + shape rendering + interaction handlers
+  SelectionOverlay.tsx — SVG handles + smart guides + marquee
+  LayerPanel.tsx       — Tree view from SceneGraph
+  PropertiesPanel.tsx  — Property editor
+  Toolbar.tsx          — Tool selector
+  Header.tsx / StatusBar.tsx
+```
+
+## 5. Interaction Model
+
+### Canvas Interactions
+
+| Action | Handler | Engine Method |
+|--------|---------|--------------|
+| Click shape | Konva onClick | `engine.select(id)` |
+| Shift+Click | Konva onClick | `engine.addToSelection(id)` |
+| Drag shape | Konva onDragMove | `engine.startMove()` → `engine.updateTransform()` → `engine.commitMove()` |
+| Resize handle | Konva onTransformEnd | `engine.startResize()` → `engine.updateTransform()` → `engine.commitResize()` |
+| Rotate handle | Konva onTransformEnd | `engine.startRotate()` → `engine.updateTransform()` → `engine.commitRotate()` |
+| Marquee drag | Konva onMouseDown (empty) | `engine.selectWithMarquee()` |
+| Double-click frame | Konva onDblClick | `engine.enterContext(id)` |
+| Escape | keydown | `engine.clearSelection()` / `engine.exitContext()` |
 
 ### Keyboard Shortcuts
-- `Space + Drag`: Pan canvas
-- `Cmd/Ctrl + 0`: Reset zoom to 100%
-- `Cmd/Ctrl + 1`: Zoom to fit
-- `Delete/Backspace`: Delete selected
-- `Escape`: Deselect all
-- `Cmd/Ctrl + A`: Select all
-- `Cmd/Ctrl + S`: Quick save to localStorage
+- `V` — Select tool
+- `R` — Rectangle
+- `T` — Text
+- `F` — Frame
+- `O` — Ellipse
+- `L` — Line
+- `P` — Pen
+- `Space+Drag` — Pan
+- `Cmd/Ctrl+0` — Zoom 100%
+- `Cmd/Ctrl+1` — Zoom to fit
+- `Cmd/Ctrl+Z` — Undo
+- `Cmd/Ctrl+Shift+Z` — Redo
+- `Delete/Backspace` — Delete selected
+- `Cmd/Ctrl+A` — Select all
+- `Cmd/Ctrl+D` — Duplicate
+- `Cmd/Ctrl+G` — Group
+- `Cmd/Ctrl+Shift+G` — Ungroup
 
-## 5. Component Inventory
+## 6. Component Editing
 
-### Header
-- Logo (inline SVG, amber accent)
-- Title "AI Canvas" in Instrument Sans medium
-- Help icon (opens shortcuts modal)
-- Settings gear (future)
+### Double-Click Flow
+1. Double-click on frame/component → `engine.enterContext(nodeId)`
+2. `selectionContextId` set to container ID
+3. Canvas shows only children of that container (isolation mode)
+4. Layer panel shows container's children as root
+5. Double-click empty canvas or press Escape → `engine.exitContext()` → restore full page view
 
-### LayerItem
-- States: default, hover (show actions), selected (accent border), locked (dimmed), hidden (strikethrough)
-- Type icon (rect/circle/text/line)
-- Name (editable on double-click)
-- Visibility toggle (eye icon)
-- Lock toggle (lock icon)
+### Component Instance
+- Create: select frame → right-click → "Create Component" → creates ComponentNode + replaces original with InstanceNode
+- Edit: double-click instance → enter component editing mode
+- Exit: "Exit" button or Escape
 
-### Canvas
-- Konva Stage container
-- Dot grid background
-- Shapes rendered from state
-- Selection indicators
-- Transform handles when selected
+## 7. Text Editing
 
-### ChatMessage
-- User: right-aligned, --bg-elevated background, rounded corners (sharp on right)
-- AI: left-aligned, --bg-surface background, rounded corners (sharp on left)
-- Avatar: small amber circle with "AI" or user initial
-- Timestamp on hover
+- Double-click text node → show HTML textarea overlay positioned over text
+- Type to edit, click outside or Escape to commit
+- Commits via `engine.executeCommand(propertyCommand)` for undo support
 
-### PropertyInput
-- Label (text-secondary, small)
-- Input field (bg-elevated, border on focus)
-- Unit suffix where applicable (px, °, %)
-- Increment/decrement arrows
+## 8. Layer Panel
 
-### ShapeRenderer
-- Renders based on type: Rect, Circle, Text, Line
-- Handles selection state
-- Applies styles from shape data
+- Tree view of SceneGraph (page → children → grandchildren...)
+- Each item shows: type icon, name, visibility toggle, lock toggle
+- Chevron for expand/collapse (containers: frame, group, component)
+- Click to select, Shift+click to multi-select
+- Double-click name to rename
+- Drag to reorder (changes z-index)
+- Right-click for context menu (delete, duplicate, group, ungroup)
 
-### StatusBar
-- Connection status indicator (dot + text)
-- Zoom level (clickable to reset)
-- Canvas dimensions
-- Shape count
+## 9. Properties Panel
 
-## 6. Technical Approach
+- Shows when shape(s) selected
+- Position: X, Y (editable inputs)
+- Size: W, H (editable, with lock aspect ratio toggle)
+- Rotation: degree input
+- Appearance: fill color, stroke color, stroke width
+- Opacity: slider 0–100%
+- For text: font size, font family, alignment
+- For frame: corner radius, background color
 
-### Stack
-- **Framework**: Next.js 14+ (App Router)
-- **Canvas**: react-konva + konva
-- **State**: Zustand (single store for shapes, selection, UI state)
-- **Styling**: Tailwind CSS + CSS variables for theme
-- **Icons**: lucide-react
+## 10. State Management
 
-### Data Model
+### Zustand Store (useEditorStore)
 ```typescript
-interface Shape {
-  id: string;
-  type: 'rect' | 'circle' | 'text' | 'line';
-  x: number;
-  y: number;
-  width?: number;      // for rect
-  height?: number;     // for rect
-  radius?: number;     // for circle
-  text?: string;       // for text
-  points?: number[];   // for line [x1, y1, x2, y2]
-  fill: string;
-  stroke: string;
-  strokeWidth: number;
-  opacity: number;
-  rotation: number;
-  visible: boolean;
-  locked: boolean;
-}
+interface EditorState {
+  // Document
+  pages: Page[];
+  activePageId: string;
+  shapes: Shape[];  // Flat array, synced from SceneGraph
 
-interface AppState {
-  shapes: Shape[];
+  // Selection
   selectedIds: string[];
+  selectionContextId: string | null;  // For component isolation mode
+
+  // Viewport
   canvasZoom: number;
   canvasPan: { x: number; y: number };
-  chatHistory: ChatMessage[];
-  savedMaterials: Material[];
+  viewportWidth: number;
+  viewportHeight: number;
+
+  // Tool
+  activeTool: ToolType;
+
+  // UI
+  contextMenu: ContextMenuState | null;
 }
 ```
 
-### AI Integration (Function Calling Schema)
-```typescript
-// Tool: add_shapes
-{
-  name: "add_shapes",
-  description: "Add one or more shapes to the canvas",
-  parameters: {
-    type: "object",
-    properties: {
-      shapes: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            type: { enum: ["rect", "circle", "text", "line"] },
-            x: { type: "number" },
-            y: { type: "number" },
-            width?: { type: "number" },
-            height?: { type: "number" },
-            radius?: { type: "number" },
-            text?: { type: "string" },
-            fill?: { type: "string" },
-            stroke?: { type: "string" },
-          },
-          required: ["type", "x", "y"]
-        }
-      }
-    }
-  }
-}
-```
+### History
+- Store does NOT own history array
+- All undo/redo via HistoryManager (Command Pattern)
+- Undo/redo wired to Cmd+Z / Cmd+Shift+Z in useKeyboardShortcuts
 
-### File Structure
-```
-/app
-  /page.tsx              # Main editor page
-  /layout.tsx             # Root layout with fonts
-  /globals.css            # CSS variables, base styles
-/components
-  /Editor.tsx             # Main three-panel layout
-  /Canvas.tsx             # Konva stage wrapper
-  /LayerPanel.tsx         # Left panel layers list
-  /ChatPanel.tsx          # Right panel chat
-  /PropertiesPanel.tsx    # Right panel properties
-  /Header.tsx             # Top header bar
-  /StatusBar.tsx          # Bottom status bar
-  /LayerItem.tsx          # Single layer row
-  /ChatMessage.tsx        # Single chat message
-  /ShapeRenderer.tsx      # Konva shape renderer
-/stores
-  /useEditorStore.ts      # Zustand store
-/lib
-  /shapes.ts              # Shape utilities
-  /storage.ts             # localStorage helpers
-  /ai.ts                  # AI prompt/system config
-/public
-  /favicon.svg
-```
+## 11. Tech Stack
 
-### Local Storage Keys
-- `ai-canvas:shapes` — Current canvas shapes
-- `ai-canvas:materials` — Saved shape templates
-- `ai-canvas:chat` — Chat history (last 50 messages)
-
-### Canvas Coordinate System
-- Default canvas size: 1920×1080
-- All AI prompts include: "Canvas size is 1920×1080. Coordinates are from top-left (0,0)."
+- **Framework**: Next.js 16 (App Router)
+- **Canvas**: react-konva + konva
+- **State**: Zustand with persist middleware
+- **Icons**: lucide-react
+- **Styling**: Tailwind CSS + CSS variables
+- **Build**: 0 TypeScript errors, 0 warnings
