@@ -10,7 +10,7 @@ import {
 import { unionAABBs } from '@/lib/measurement';
 import { computeBooleanPath, canDoBoolean } from '@/lib/boolean';
 import { resolveAutoLayoutSize } from '@/lib/layout';
-import { getEditorEngine } from '@/hooks/useEditor';
+import { getEditorEngine, syncEditorFromStore } from '@/hooks/useEditor';
 
 const MAX_HISTORY = 50;
 
@@ -557,6 +557,8 @@ export const useEditorStore = create<EditorState>()(
           );
           return { pages: ps.pages, shapes: ps.shapes };
         });
+        // Sync → SceneGraph so engines see updated properties
+        syncEditorFromStore();
       },
 
       // Moves shape `id` to position `targetIndex` among its siblings (shapes with same parentId).
@@ -645,6 +647,16 @@ export const useEditorStore = create<EditorState>()(
           const ps = updatePageShapes(state.pages, ap, () => next);
           return { pages: ps.pages, shapes: ps.shapes, selectedIds: [gid] };
         });
+        // Sync → SceneGraph and record in engine history
+        const engine = getEditorEngine();
+        if (engine) {
+          syncEditorFromStore();
+          engine.getHistoryManager().execute(
+            engine.getHistoryManager().groupCommand(selectedIds, gid, p0 ?? 'canvas')
+          );
+        } else {
+          syncEditorFromStore();
+        }
       },
 
       ungroupSelection: () => {
@@ -665,6 +677,16 @@ export const useEditorStore = create<EditorState>()(
           );
           return { pages: ps.pages, shapes: ps.shapes, selectedIds: childIds.length ? childIds : [] };
         });
+        // Sync → SceneGraph and record in engine history
+        const engine = getEditorEngine();
+        if (engine) {
+          syncEditorFromStore();
+          engine.getHistoryManager().execute(
+            engine.getHistoryManager().ungroupCommand(groupId, childIds, gp ?? 'canvas', 0)
+          );
+        } else {
+          syncEditorFromStore();
+        }
       },
 
       setCanvasBg: (bg) => set({ canvasBg: bg }),
@@ -830,6 +852,21 @@ export const useEditorStore = create<EditorState>()(
           const ps = updatePageShapes(state.pages, state.activePageId, () => []);
           return { pages: ps.pages, shapes: ps.shapes, selectedIds: [] };
         });
+        // Sync → SceneGraph so engines reflect empty canvas
+        const engine = getEditorEngine();
+        if (engine) {
+          const sg = engine.getSceneGraph();
+          const page = sg.getCurrentPage();
+          if (page) {
+            const allNodeIds = sg.getChildren(page.id).map(n => n.id);
+            if (allNodeIds.length > 0) {
+              engine.getHistoryManager().execute(
+                engine.getHistoryManager().removeNodesCommand(allNodeIds, 'Clear Canvas')
+              );
+            }
+          }
+        }
+        syncEditorFromStore();
       },
 
       bringForward: (id) => {
@@ -848,6 +885,7 @@ export const useEditorStore = create<EditorState>()(
           engine.getHistoryManager().execute(
             engine.getHistoryManager().reorderCommand(id, toIdx, fromIdx)
           );
+          syncEditorFromStore();
         } else {
           get().pushHistory();
           set(state => {
@@ -880,6 +918,7 @@ export const useEditorStore = create<EditorState>()(
           engine.getHistoryManager().execute(
             engine.getHistoryManager().reorderCommand(id, toIdx, fromIdx)
           );
+          syncEditorFromStore();
         } else {
           get().pushHistory();
           set(state => {
@@ -915,6 +954,7 @@ export const useEditorStore = create<EditorState>()(
           engine.getHistoryManager().execute(
             engine.getHistoryManager().reorderCommand(id, toIdx, fromIdx)
           );
+          syncEditorFromStore();
         } else {
           get().pushHistory();
           set(state => {
@@ -945,6 +985,7 @@ export const useEditorStore = create<EditorState>()(
           engine.getHistoryManager().execute(
             engine.getHistoryManager().reorderCommand(id, toIdx, fromIdx)
           );
+          syncEditorFromStore();
         } else {
           get().pushHistory();
           set(state => {
@@ -995,6 +1036,8 @@ export const useEditorStore = create<EditorState>()(
           const ps = updatePageShapes(state.pages, state.activePageId, ss => [...ss, ...copies]);
           return { pages: ps.pages, shapes: ps.shapes, selectedIds: newIds };
         });
+        // Sync → SceneGraph so engines reflect new shapes
+        syncEditorFromStore();
         return newIds;
       },
 
@@ -1034,6 +1077,8 @@ export const useEditorStore = create<EditorState>()(
           const ps = updatePageShapes(state.pages, state.activePageId, ss => [...ss, ...newShapes]);
           return { pages: ps.pages, shapes: ps.shapes, selectedIds: newIds };
         });
+        // Sync → SceneGraph so engines reflect new shapes
+        syncEditorFromStore();
       },
 
       moveGroupShapes: (groupId, leadId, newLeadX, newLeadY) => {
@@ -1053,6 +1098,13 @@ export const useEditorStore = create<EditorState>()(
           const ps = updatePageShapes(state.pages, state.activePageId, ss => ss.map(s => s.id === shapeId ? { ...s, parentId: newParentId } : s));
           return { pages: ps.pages, shapes: ps.shapes };
         });
+        // Sync → SceneGraph via engine reparent
+        const engine = getEditorEngine();
+        if (engine) {
+          engine.reparentNode(shapeId, newParentId ?? null);
+        } else {
+          syncEditorFromStore();
+        }
         if (newParentId) {
           const shapes = get().shapes;
           const frame = shapes.find(s => s.id === newParentId);
@@ -1180,6 +1232,8 @@ export const useEditorStore = create<EditorState>()(
           );
           return { pages: ps.pages, shapes: ps.shapes, selectedIds: [newShape.id] };
         });
+        // Sync → SceneGraph so engines reflect new path shape
+        syncEditorFromStore();
       },
 
       alignShapes: (ids, alignment) => {
@@ -1231,6 +1285,8 @@ export const useEditorStore = create<EditorState>()(
           ));
           return { components: [...state.components, comp], pages: ps.pages, shapes: ps.shapes };
         });
+        // Sync → SceneGraph so engines reflect component shapes
+        syncEditorFromStore();
         return compId;
       },
 
@@ -1240,7 +1296,7 @@ export const useEditorStore = create<EditorState>()(
         const instanceId = uuid();
         const offsetX = comp.shapes[0]?.x || 0;
         const offsetY = comp.shapes[0]?.y || 0;
-        // 建立旧ID → 新ID 的映射，保留嵌套关系
+        // Build oldId→newId map, preserve nesting
         const idMap = new Map<string, string>();
         comp.shapes.forEach(s => idMap.set(s.id, uuid()));
         const instanceShapes: Shape[] = comp.shapes.map(s => ({
@@ -1258,6 +1314,8 @@ export const useEditorStore = create<EditorState>()(
           const ps = updatePageShapes(state.pages, state.activePageId, ss => [...ss, ...instanceShapes]);
           return { pages: ps.pages, shapes: ps.shapes, selectedIds: instanceShapes.map(s => s.id) };
         });
+        // Sync → SceneGraph so engines reflect new instance shapes
+        syncEditorFromStore();
         return instanceId;
       },
 
@@ -1620,6 +1678,8 @@ export const useEditorStore = create<EditorState>()(
           );
           return { pages: ps.pages, shapes: ps.shapes };
         });
+        // Sync → SceneGraph so engines reflect new text styles
+        syncEditorFromStore();
       },
       setActiveTextStyleId: (id) => set({ activeTextStyleId: id }),
     }),

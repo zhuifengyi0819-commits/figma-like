@@ -346,4 +346,71 @@ export class HistoryManager {
       },
     };
   }
+
+  /** Command: add nodes to SceneGraph (for arrayCopy, paste, etc.) */
+  addNodesCommand(nodes: Record<string, unknown>[], parentId: string, name = 'Add'): Command {
+    const nodeIds = nodes.map(n => n.id as string);
+    return {
+      id: `add-${Date.now()}`,
+      name,
+      execute: () => {
+        for (const node of nodes) {
+          if (!this.sceneGraph.hasNode(node.id as string)) {
+            this.sceneGraph.addNode(node as any, parentId);
+          }
+        }
+      },
+      undo: () => {
+        for (const id of nodeIds) {
+          this.sceneGraph.removeNode(id);
+        }
+      },
+    };
+  }
+
+  /** Command: remove nodes from SceneGraph (for clearCanvas, etc.) */
+  removeNodesCommand(nodeIds: string[], name = 'Remove'): Command {
+    type NodeSnapshot = { parentId: string | null; index: number; data: Record<string, unknown> };
+    const snapshots = new Map<string, NodeSnapshot>();
+    for (const id of nodeIds) {
+      const node = this.sceneGraph.getNode(id);
+      if (node) snapshots.set(id, { parentId: node.parentId, index: this.sceneGraph.getIndexInParent(id), data: { ...node } as Record<string, unknown> });
+    }
+    return {
+      id: `remove-${Date.now()}`,
+      name,
+      execute: () => {
+        for (const id of nodeIds) this.sceneGraph.removeNode(id);
+      },
+      undo: () => {
+        const sorted = [...snapshots.entries()].sort((a, b) => a[1].index - b[1].index);
+        for (const [id, snap] of sorted) {
+          if (snap.parentId) this.sceneGraph.addNode(snap.data as any, snap.parentId, snap.index);
+        }
+      },
+    };
+  }
+
+  /** Command: update multiple node properties atomically */
+  batchPropertyCommand(
+    updates: Array<{ nodeId: string; key: string; before: unknown; after: unknown }>,
+    name = 'Change Properties'
+  ): Command {
+    return {
+      id: `batch-${Date.now()}`,
+      name,
+      mergeable: true,
+      timestamp: Date.now(),
+      execute: () => {
+        for (const u of updates) {
+          this.sceneGraph.updateNode(u.nodeId, { [u.key]: u.after } as any);
+        }
+      },
+      undo: () => {
+        for (const u of updates) {
+          this.sceneGraph.updateNode(u.nodeId, { [u.key]: u.before } as any);
+        }
+      },
+    };
+  }
 }
