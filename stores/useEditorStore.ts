@@ -10,6 +10,7 @@ import {
 import { unionAABBs } from '@/lib/measurement';
 import { computeBooleanPath, canDoBoolean } from '@/lib/boolean';
 import { resolveAutoLayoutSize } from '@/lib/layout';
+import { getEditorEngine } from '@/hooks/useEditor';
 
 const MAX_HISTORY = 50;
 
@@ -839,19 +840,29 @@ export const useEditorStore = create<EditorState>()(
         const siblings = shapes.filter(s => s.parentId === parentId);
         const idx = siblings.findIndex(s => s.id === id);
         if (idx === -1 || idx === siblings.length - 1) return;
-        get().pushHistory();
-        set(state => {
-          const ps = updatePageShapes(state.pages, state.activePageId, ss => {
-            const arr = [...ss];
-            const flatIdx = arr.findIndex(s => s.id === id);
-            const nextFlatIdx = arr.findIndex(s => s.id === siblings[idx + 1].id);
-            if (flatIdx !== -1 && nextFlatIdx !== -1) {
-              [arr[flatIdx], arr[nextFlatIdx]] = [arr[nextFlatIdx], arr[flatIdx]];
-            }
-            return arr;
+        // Record old index for undo, then update via engine for SceneGraph consistency
+        const fromIdx = idx;
+        const toIdx = idx + 1;
+        const engine = getEditorEngine();
+        if (engine) {
+          engine.getHistoryManager().execute(
+            engine.getHistoryManager().reorderCommand(id, toIdx, fromIdx)
+          );
+        } else {
+          get().pushHistory();
+          set(state => {
+            const ps = updatePageShapes(state.pages, state.activePageId, ss => {
+              const arr = [...ss];
+              const flatIdx = arr.findIndex(s => s.id === id);
+              const nextFlatIdx = arr.findIndex(s => s.id === siblings[idx + 1].id);
+              if (flatIdx !== -1 && nextFlatIdx !== -1) {
+                [arr[flatIdx], arr[nextFlatIdx]] = [arr[nextFlatIdx], arr[flatIdx]];
+              }
+              return arr;
+            });
+            return { pages: ps.pages, shapes: ps.shapes };
           });
-          return { pages: ps.pages, shapes: ps.shapes };
-        });
+        }
       },
 
       sendBackward: (id) => {
@@ -862,19 +873,28 @@ export const useEditorStore = create<EditorState>()(
         const siblings = shapes.filter(s => s.parentId === parentId);
         const idx = siblings.findIndex(s => s.id === id);
         if (idx <= 0) return;
-        get().pushHistory();
-        set(state => {
-          const ps = updatePageShapes(state.pages, state.activePageId, ss => {
-            const arr = [...ss];
-            const flatIdx = arr.findIndex(s => s.id === id);
-            const prevFlatIdx = arr.findIndex(s => s.id === siblings[idx - 1].id);
-            if (flatIdx !== -1 && prevFlatIdx !== -1) {
-              [arr[flatIdx], arr[prevFlatIdx]] = [arr[prevFlatIdx], arr[flatIdx]];
-            }
-            return arr;
+        const fromIdx = idx;
+        const toIdx = idx - 1;
+        const engine = getEditorEngine();
+        if (engine) {
+          engine.getHistoryManager().execute(
+            engine.getHistoryManager().reorderCommand(id, toIdx, fromIdx)
+          );
+        } else {
+          get().pushHistory();
+          set(state => {
+            const ps = updatePageShapes(state.pages, state.activePageId, ss => {
+              const arr = [...ss];
+              const flatIdx = arr.findIndex(s => s.id === id);
+              const prevFlatIdx = arr.findIndex(s => s.id === siblings[idx - 1].id);
+              if (flatIdx !== -1 && prevFlatIdx !== -1) {
+                [arr[flatIdx], arr[prevFlatIdx]] = [arr[prevFlatIdx], arr[flatIdx]];
+              }
+              return arr;
+            });
+            return { pages: ps.pages, shapes: ps.shapes };
           });
-          return { pages: ps.pages, shapes: ps.shapes };
-        });
+        }
       },
 
       showContextMenu: (menu) => set({ contextMenu: menu }),
@@ -882,31 +902,63 @@ export const useEditorStore = create<EditorState>()(
       setArrayModalOpen: (open) => set({ arrayModalOpen: open }),
 
       bringToFront: (id) => {
-        set(state => {
-          const ps = updatePageShapes(state.pages, state.activePageId, ss => {
-            const idx = ss.findIndex(s => s.id === id);
-            if (idx === -1 || idx === ss.length - 1) return ss;
-            const arr = [...ss];
-            const [item] = arr.splice(idx, 1);
-            arr.push(item);
-            return arr;
+        const { shapes } = get();
+        const shape = shapes.find(s => s.id === id);
+        if (!shape) return;
+        const parentId = shape.parentId;
+        const siblings = shapes.filter(s => s.parentId === parentId);
+        const fromIdx = siblings.findIndex(s => s.id === id);
+        if (fromIdx === -1 || fromIdx === siblings.length - 1) return;
+        const toIdx = siblings.length - 1;
+        const engine = getEditorEngine();
+        if (engine) {
+          engine.getHistoryManager().execute(
+            engine.getHistoryManager().reorderCommand(id, toIdx, fromIdx)
+          );
+        } else {
+          get().pushHistory();
+          set(state => {
+            const ps = updatePageShapes(state.pages, state.activePageId, ss => {
+              const idx = ss.findIndex(s => s.id === id);
+              if (idx === -1 || idx === ss.length - 1) return ss;
+              const arr = [...ss];
+              const [item] = arr.splice(idx, 1);
+              arr.push(item);
+              return arr;
+            });
+            return { pages: ps.pages, shapes: ps.shapes };
           });
-          return { pages: ps.pages, shapes: ps.shapes };
-        });
+        }
       },
 
       sendToBack: (id) => {
-        set(state => {
-          const ps = updatePageShapes(state.pages, state.activePageId, ss => {
-            const idx = ss.findIndex(s => s.id === id);
-            if (idx === -1 || idx === 0) return ss;
-            const arr = [...ss];
-            const [item] = arr.splice(idx, 1);
-            arr.unshift(item);
-            return arr;
+        const { shapes } = get();
+        const shape = shapes.find(s => s.id === id);
+        if (!shape) return;
+        const parentId = shape.parentId;
+        const siblings = shapes.filter(s => s.parentId === parentId);
+        const fromIdx = siblings.findIndex(s => s.id === id);
+        if (fromIdx <= 0) return;
+        const toIdx = 0;
+        const engine = getEditorEngine();
+        if (engine) {
+          engine.getHistoryManager().execute(
+            engine.getHistoryManager().reorderCommand(id, toIdx, fromIdx)
+          );
+        } else {
+          get().pushHistory();
+          set(state => {
+            const ps = updatePageShapes(state.pages, state.activePageId, ss => {
+              const idx = ss.findIndex(s => s.id === id);
+              if (idx === -1 || idx === 0) return ss;
+              const arr = [...ss];
+              const [item] = arr.splice(idx, 1);
+              arr.unshift(item);
+              return arr;
+            });
+            return { pages: ps.pages, shapes: ps.shapes };
           });
-          return { pages: ps.pages, shapes: ps.shapes };
-        });
+        }
       },
 
       duplicateShapes: (ids) => {
