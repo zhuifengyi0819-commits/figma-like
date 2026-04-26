@@ -1,6 +1,7 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
+import { getEditorEngine, syncEditorFromStore } from '@/hooks/useEditor';
 import { Shape, Shadow, Gradient, Fill, Stroke, AutoLayout, Interaction, TextSizing, BlendMode, BlurEffect, LayoutGrid as LayoutGridType, DEFAULT_AUTO_LAYOUT, DesignToken, DesignTheme, TokenBindings, ConstraintAxis, OverlayConfig, ComponentStateType } from '@/lib/types';
 import {
   ArrowUp, ArrowDown, Trash2, Copy, Move, Plus, Eye, EyeOff,
@@ -951,25 +952,11 @@ export default function PropertiesPanel() {
 
   const [tokenPickerFor, setTokenPickerFor] = useState<keyof TokenBindings | null>(null);
 
-  const historyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const historyPushed = useRef(false);
-
-  const debouncedPushHistory = useCallback(() => {
-    if (!historyPushed.current) {
-      pushHistory();
-      historyPushed.current = true;
-    }
-    if (historyTimer.current) clearTimeout(historyTimer.current);
-    historyTimer.current = setTimeout(() => { historyPushed.current = false; }, 400);
-  }, [pushHistory]);
-
   const update = useCallback((u: Partial<Shape>) => {
-    debouncedPushHistory();
     updateShapes(selectedIds, u);
-  }, [selectedIds, updateShapes, debouncedPushHistory]);
+  }, [selectedIds, updateShapes]);
 
   const updateShadow = useCallback((idx: number, patch: Partial<Shadow>) => {
-    debouncedPushHistory();
     selectedIds.forEach(id => {
       const shape = shapes.find(s => s.id === id);
       if (!shape) return;
@@ -979,10 +966,9 @@ export default function PropertiesPanel() {
         updateShape(id, { shadows, shadow: shadows[0] });
       }
     });
-  }, [selectedIds, shapes, updateShape, debouncedPushHistory]);
+  }, [selectedIds, shapes, updateShape]);
 
   const addShadow = useCallback(() => {
-    debouncedPushHistory();
     selectedIds.forEach(id => {
       const shape = shapes.find(s => s.id === id);
       if (!shape) return;
@@ -990,10 +976,9 @@ export default function PropertiesPanel() {
       shadows.push({ color: '#00000040', blur: 10, offsetX: 4, offsetY: 4 });
       updateShape(id, { shadows, shadow: shadows[0] });
     });
-  }, [selectedIds, shapes, updateShape, debouncedPushHistory]);
+  }, [selectedIds, shapes, updateShape]);
 
   const removeShadow = useCallback((idx: number) => {
-    debouncedPushHistory();
     selectedIds.forEach(id => {
       const shape = shapes.find(s => s.id === id);
       if (!shape) return;
@@ -1001,10 +986,9 @@ export default function PropertiesPanel() {
       shadows.splice(idx, 1);
       updateShape(id, { shadows, shadow: shadows[0] || undefined });
     });
-  }, [selectedIds, shapes, updateShape, debouncedPushHistory]);
+  }, [selectedIds, shapes, updateShape]);
 
   const addFill = useCallback(() => {
-    debouncedPushHistory();
     selectedIds.forEach(id => {
       const shape = shapes.find(s => s.id === id);
       if (!shape) return;
@@ -1012,10 +996,9 @@ export default function PropertiesPanel() {
       fills.push({ type: 'solid', color: '#D4A853' });
       updateShape(id, { fills });
     });
-  }, [selectedIds, shapes, updateShape, debouncedPushHistory]);
+  }, [selectedIds, shapes, updateShape]);
 
   const updateFill = useCallback((idx: number, patch: Partial<Fill>) => {
-    debouncedPushHistory();
     selectedIds.forEach(id => {
       const shape = shapes.find(s => s.id === id);
       if (!shape) return;
@@ -1025,10 +1008,9 @@ export default function PropertiesPanel() {
         updateShape(id, { fills, fill: fills[0]?.color || shape.fill });
       }
     });
-  }, [selectedIds, shapes, updateShape, debouncedPushHistory]);
+  }, [selectedIds, shapes, updateShape]);
 
   const removeFill = useCallback((idx: number) => {
-    debouncedPushHistory();
     selectedIds.forEach(id => {
       const shape = shapes.find(s => s.id === id);
       if (!shape) return;
@@ -1036,22 +1018,20 @@ export default function PropertiesPanel() {
       fills.splice(idx, 1);
       updateShape(id, { fills, fill: fills[0]?.color || 'transparent' });
     });
-  }, [selectedIds, shapes, updateShape, debouncedPushHistory]);
+  }, [selectedIds, shapes, updateShape]);
 
   const updateGradient = useCallback((g: Gradient | undefined) => {
-    debouncedPushHistory();
     selectedIds.forEach(id => updateShape(id, { gradient: g }));
-  }, [selectedIds, updateShape, debouncedPushHistory]);
+  }, [selectedIds, updateShape]);
 
   const updateAutoLayout = useCallback((patch: Partial<AutoLayout>) => {
     if (!selectedIds[0]) return;
     const currentShape = shapes.find(s => s.id === selectedIds[0]);
     if (!currentShape) return;
-    debouncedPushHistory();
     const current = currentShape.autoLayout || DEFAULT_AUTO_LAYOUT;
     updateShape(currentShape.id, { autoLayout: { ...current, ...patch } });
     setTimeout(() => applyAutoLayout(currentShape.id), 0);
-  }, [selectedIds, shapes, updateShape, debouncedPushHistory, applyAutoLayout]);
+  }, [selectedIds, shapes, updateShape, applyAutoLayout]);
 
   if (selected.length === 0) {
     return (
@@ -1638,7 +1618,6 @@ export default function PropertiesPanel() {
                     {/* Visibility toggle for all fills */}
                     <button
                       onClick={() => {
-                        debouncedPushHistory();
                         selectedIds.forEach(id => {
                           const shape = shapes.find(s => s.id === id);
                           if (!shape) return;
@@ -1679,7 +1658,6 @@ export default function PropertiesPanel() {
                             {strokes.length > 1 && (
                               <button
                                 onClick={() => {
-                                  debouncedPushHistory();
                                   selectedIds.forEach(id => {
                                     const shape = shapes.find(s => s.id === id);
                                     if (!shape) return;
@@ -1699,7 +1677,6 @@ export default function PropertiesPanel() {
                             label="颜色"
                             value={s.color}
                             onChange={v => {
-                              debouncedPushHistory();
                               selectedIds.forEach(id => {
                                 const shape = shapes.find(s => s.id === id);
                                 if (!shape) return;
@@ -1716,7 +1693,6 @@ export default function PropertiesPanel() {
                               label="宽度"
                               value={s.width}
                               onChange={v => {
-                                debouncedPushHistory();
                                 selectedIds.forEach(id => {
                                   const shape = shapes.find(s => s.id === id);
                                   if (!shape) return;
@@ -1734,7 +1710,6 @@ export default function PropertiesPanel() {
                               <select
                                 value={s.style || 'solid'}
                                 onChange={e => {
-                                  debouncedPushHistory();
                                   selectedIds.forEach(id => {
                                     const shape = shapes.find(s => s.id === id);
                                     if (!shape) return;
@@ -1755,7 +1730,6 @@ export default function PropertiesPanel() {
                               <select
                                 value={Math.round((s.opacity ?? 1) * 100)}
                                 onChange={e => {
-                                  debouncedPushHistory();
                                   selectedIds.forEach(id => {
                                     const shape = shapes.find(s => s.id === id);
                                     if (!shape) return;
@@ -1779,7 +1753,6 @@ export default function PropertiesPanel() {
                       ))}
                       <button
                         onClick={() => {
-                          debouncedPushHistory();
                           selectedIds.forEach(id => {
                             const shape = shapes.find(s => s.id === id);
                             if (!shape) return;
@@ -1973,13 +1946,23 @@ export default function PropertiesPanel() {
                     </p>
                     <button
                       onClick={() => {
-                        pushHistory();
-                        // Clear maskSourceId from all shapes that reference this shape as mask
-                        shapes.forEach(s => {
-                          if (s.maskSourceId === single.id) {
-                            updateShape(s.id, { maskSourceId: undefined });
-                          }
-                        });
+                        const engine = getEditorEngine();
+                        if (engine) {
+                          shapes.forEach(s => {
+                            if (s.maskSourceId === single.id) {
+                              const cmd = engine.getHistoryManager().propertyCommand(s.id, 'maskSourceId' as any, s.maskSourceId, undefined, 'Release Mask');
+                              engine.executeCommand(cmd);
+                            }
+                          });
+                          syncEditorFromStore();
+                        } else {
+                          pushHistory();
+                          shapes.forEach(s => {
+                            if (s.maskSourceId === single.id) {
+                              updateShape(s.id, { maskSourceId: undefined });
+                            }
+                          });
+                        }
                       }}
                       className="w-full py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:bg-red-500/10 hover:text-red-400 transition-colors border border-[var(--border)]"
                     >
@@ -1994,8 +1977,15 @@ export default function PropertiesPanel() {
                     </p>
                     <button
                       onClick={() => {
-                        pushHistory();
-                        updateShape(single.id, { maskSourceId: undefined });
+                        const engine = getEditorEngine();
+                        if (engine) {
+                          const cmd = engine.getHistoryManager().propertyCommand(single.id, 'maskSourceId' as any, single.maskSourceId, undefined, 'Release Mask');
+                          engine.executeCommand(cmd);
+                          syncEditorFromStore();
+                        } else {
+                          pushHistory();
+                          updateShape(single.id, { maskSourceId: undefined });
+                        }
                       }}
                       className="w-full py-1.5 text-[11px] rounded bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:bg-red-500/10 hover:text-red-400 transition-colors border border-[var(--border)]"
                     >
@@ -2008,15 +1998,25 @@ export default function PropertiesPanel() {
                     <p className="text-[10px] text-[var(--text-tertiary)]">将此图形设为遮罩源，其下方所有图形将被裁切</p>
                     <button
                       onClick={() => {
-                        pushHistory();
-                        // Find sibling shapes (same parentId) and set maskSourceId on all that come AFTER this shape
+                        const engine = getEditorEngine();
                         const siblings = shapes.filter(s => s.parentId === single.parentId);
                         const thisIndex = siblings.findIndex(s => s.id === single.id);
-                        siblings.forEach((s, idx) => {
-                          if (idx > thisIndex) {
-                            updateShape(s.id, { maskSourceId: single.id });
-                          }
-                        });
+                        if (engine) {
+                          siblings.forEach((s, idx) => {
+                            if (idx > thisIndex) {
+                              const cmd = engine.getHistoryManager().propertyCommand(s.id, 'maskSourceId' as any, s.maskSourceId, single.id, 'Set Mask');
+                              engine.executeCommand(cmd);
+                            }
+                          });
+                          syncEditorFromStore();
+                        } else {
+                          pushHistory();
+                          siblings.forEach((s, idx) => {
+                            if (idx > thisIndex) {
+                              updateShape(s.id, { maskSourceId: single.id });
+                            }
+                          });
+                        }
                       }}
                       className="w-full py-1.5 text-[11px] rounded bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors border border-[var(--accent)]/20"
                     >

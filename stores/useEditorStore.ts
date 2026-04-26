@@ -117,7 +117,6 @@ interface EditorState {
   copiedStyle: Partial<Shape> | null;
   copyStyle: () => void;
   pasteStyle: () => void;
-  reorderShape: (id: string, targetIndex: number) => void;
 
   groupSelection: () => void;
   ungroupSelection: () => void;
@@ -736,6 +735,25 @@ export const useEditorStore = create<EditorState>()(
       },
 
       updateShape: (id, updates) => {
+        const engine = getEditorEngine();
+        const currentShapes = get().shapes;
+        if (engine) {
+          // Build batch of all changed keys
+          const shape = currentShapes.find(s => s.id === id);
+          if (shape) {
+            const changes: Array<{ nodeId: string; key: string; before: unknown; after: unknown }> = [];
+            for (const key of Object.keys(updates) as string[]) {
+              changes.push({ nodeId: id, key: String(key) as any, before: (shape as any)[key], after: updates[key as keyof Shape] });
+            }
+            if (changes.length > 0) {
+              const cmd = engine.getHistoryManager().batchPropertyCommand(changes, 'Update Shape');
+              engine.executeCommand(cmd);
+              syncEditorFromStore();
+              return;
+            }
+          }
+        }
+        // Fallback: legacy path
         set(state => {
           const ps = updatePageShapes(state.pages, state.activePageId, ss => ss.map(s => s.id === id ? { ...s, ...updates } : s));
           return { pages: ps.pages, shapes: ps.shapes };
@@ -743,6 +761,25 @@ export const useEditorStore = create<EditorState>()(
       },
 
       updateShapes: (ids, updates) => {
+        const engine = getEditorEngine();
+        const currentShapes = get().shapes;
+        if (engine) {
+          const idSet = new Set(ids);
+          const changes: Array<{ nodeId: string; key: string; before: unknown; after: unknown }> = [];
+          for (const shape of currentShapes) {
+            if (!idSet.has(shape.id)) continue;
+            for (const key of Object.keys(updates) as string[]) {
+              changes.push({ nodeId: shape.id, key: String(key) as any, before: (shape as any)[key], after: updates[key as keyof Shape] });
+            }
+          }
+          if (changes.length > 0) {
+            const cmd = engine.getHistoryManager().batchPropertyCommand(changes, 'Update Shapes');
+            engine.executeCommand(cmd);
+            syncEditorFromStore();
+            return;
+          }
+        }
+        // Fallback: legacy path
         const idSet = new Set(ids);
         set(state => {
           const ps = updatePageShapes(state.pages, state.activePageId, ss =>
