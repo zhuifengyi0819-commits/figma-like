@@ -1,41 +1,49 @@
 'use client';
 
 import { useEditorStore } from '@/stores/useEditorStore';
-import { Shape } from '@/lib/types';
+import { useEditor, getEditorEngine } from '@/hooks/useEditor';
+import type { SGNode } from '@/lib/scene-graph/types';
 import { Eye, EyeOff, Lock, Unlock, Trash2, Copy, Star, ImageIcon, Triangle, ArrowRight, Type, Minus, Square, Circle, Component, Layers, Frame, PenTool, ChevronRight, ChevronsDown, ChevronsUp, Search, X, Group } from 'lucide-react';
-import { useCallback, useState, useRef, useEffect, useMemo, DragEvent } from 'react';
+import { useCallback, useState, useRef, useEffect, useMemo } from 'react';
 
 const typeIconMap: Record<string, React.ReactNode> = {
-  rect: <Square size={13} />,
-  circle: <Circle size={13} />,
+  rectangle: <Square size={13} />,
+  ellipse: <Circle size={13} />,
   text: <Type size={13} />,
   line: <Minus size={13} />,
   arrow: <ArrowRight size={13} />,
   star: <Star size={13} />,
-  triangle: <Triangle size={13} />,
+  polygon: <Triangle size={13} />,
   image: <ImageIcon size={13} />,
   component: <Component size={13} />,
   frame: <Frame size={13} />,
   group: <Group size={13} />,
-  path: <PenTool size={13} />,
+  pen: <PenTool size={13} />,
+  page: <Layers size={13} />,
 };
 
+interface LayerTreeNode {
+  node: SGNode;
+  children: LayerTreeNode[];
+}
+
 interface LayerItemProps {
-  shape: Shape;
+  treeNode: LayerTreeNode;
   isSelected: boolean;
   depth: number;
   isDragOver?: boolean;
   onSelect: (id: string, addToSelection: boolean) => void;
-  onDragStart?: (e: DragEvent, id: string) => void;
-  onDragOver?: (e: DragEvent, id: string) => void;
+  onDragStart?: (e: React.DragEvent, id: string) => void;
+  onDragOver?: (e: React.DragEvent, id: string) => void;
   onDragLeave?: () => void;
-  onDrop?: (e: DragEvent, id: string) => void;
+  onDrop?: (e: React.DragEvent, id: string) => void;
 }
 
-function LayerItem({ shape, isSelected, depth, isDragOver, onSelect, onDragStart, onDragOver, onDragLeave, onDrop }: LayerItemProps) {
+function LayerItem({ treeNode, isSelected, depth, isDragOver, onSelect, onDragStart, onDragOver, onDragLeave, onDrop }: LayerItemProps) {
   const { updateShape, deleteShape, saveMaterial, duplicateShapes } = useEditorStore();
+  const node = treeNode.node;
   const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState(shape.name);
+  const [editName, setEditName] = useState(node.name);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -44,7 +52,13 @@ function LayerItem({ shape, isSelected, depth, isDragOver, onSelect, onDragStart
 
   const commitRename = () => {
     const trimmed = editName.trim();
-    if (trimmed && trimmed !== shape.name) updateShape(shape.id, { name: trimmed });
+    if (trimmed && trimmed !== node.name) {
+      const engine = getEditorEngine();
+      if (engine) {
+        engine.getSceneGraph().updateNode(node.id, { name: trimmed });
+      }
+      updateShape(node.id, { name: trimmed });
+    }
     setIsEditing(false);
   };
 
@@ -56,20 +70,20 @@ function LayerItem({ shape, isSelected, depth, isDragOver, onSelect, onDragStart
           ? 'border-l-[var(--accent)] bg-[var(--bg-hover)]'
           : 'border-l-transparent hover:bg-[var(--bg-elevated)]'
         }
-        ${!shape.visible ? 'opacity-50' : ''}
+        ${!node.visible ? 'opacity-50' : ''}
         ${isDragOver ? 'border-t-2 border-t-[var(--accent)]' : ''}
       `}
       style={{ paddingLeft: 12 + depth * 16, paddingRight: 12 }}
-      onClick={(e) => onSelect(shape.id, e.shiftKey)}
-      onDoubleClick={(e) => { e.stopPropagation(); setEditName(shape.name); setIsEditing(true); }}
+      onClick={(e) => onSelect(node.id, e.shiftKey)}
+      onDoubleClick={(e) => { e.stopPropagation(); setEditName(node.name); setIsEditing(true); }}
       draggable
-      onDragStart={(e) => onDragStart?.(e as unknown as DragEvent, shape.id)}
-      onDragOver={(e) => { e.preventDefault(); onDragOver?.(e as unknown as DragEvent, shape.id); }}
+      onDragStart={(e) => onDragStart?.(e, node.id)}
+      onDragOver={(e) => { e.preventDefault(); onDragOver?.(e, node.id); }}
       onDragLeave={onDragLeave}
-      onDrop={(e) => onDrop?.(e as unknown as DragEvent, shape.id)}
+      onDrop={(e) => onDrop?.(e, node.id)}
     >
       <span className="w-4 h-4 flex items-center justify-center text-[var(--text-tertiary)] flex-shrink-0">
-        {typeIconMap[shape.type] || <Layers size={13} />}
+        {typeIconMap[node.type] || <Layers size={13} />}
       </span>
 
       {isEditing ? (
@@ -88,25 +102,25 @@ function LayerItem({ shape, isSelected, depth, isDragOver, onSelect, onDragStart
             className="flex-1 text-xs bg-[var(--bg-elevated)] border border-[var(--accent)] rounded px-1 py-0.5 text-[var(--text-primary)] outline-none min-w-0"
           />
       ) : (
-        <span className={`flex-1 text-xs truncate ${!shape.visible ? 'line-through text-[var(--text-tertiary)]' : 'text-[var(--text-primary)]'}`}>
-          {shape.name}
+        <span className={`flex-1 text-xs truncate ${!node.visible ? 'line-through text-[var(--text-tertiary)]' : 'text-[var(--text-primary)]'}`}>
+          {node.name}
         </span>
       )}
 
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-        <button onClick={(e) => { e.stopPropagation(); updateShape(shape.id, { visible: !shape.visible }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={shape.visible ? '隐藏' : '显示'} aria-label={shape.visible ? '隐藏' : '显示'}>
-          {shape.visible ? <Eye size={11} /> : <EyeOff size={11} />}
+        <button onClick={(e) => { e.stopPropagation(); updateShape(node.id, { visible: !node.visible }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={node.visible ? '隐藏' : '显示'} aria-label={node.visible ? '隐藏' : '显示'}>
+          {node.visible ? <Eye size={11} /> : <EyeOff size={11} />}
         </button>
-        <button onClick={(e) => { e.stopPropagation(); updateShape(shape.id, { locked: !shape.locked }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={shape.locked ? '解锁' : '锁定'} aria-label={shape.locked ? '解锁' : '锁定'}>
-          {shape.locked ? <Lock size={11} /> : <Unlock size={11} />}
+        <button onClick={(e) => { e.stopPropagation(); updateShape(node.id, { locked: !node.locked }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={node.locked ? '解锁' : '锁定'} aria-label={node.locked ? '解锁' : '锁定'}>
+          {node.locked ? <Lock size={11} /> : <Unlock size={11} />}
         </button>
-        <button onClick={(e) => { e.stopPropagation(); duplicateShapes([shape.id]); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title="复制" aria-label="复制">
+        <button onClick={(e) => { e.stopPropagation(); duplicateShapes([node.id]); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title="复制" aria-label="复制">
           <Copy size={11} />
         </button>
-        <button onClick={(e) => { e.stopPropagation(); saveMaterial(shape, shape.name); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--accent)]" title="收藏" aria-label="收藏">
+        <button onClick={(e) => { e.stopPropagation(); const shape = useEditorStore.getState().shapes.find((s: any) => s.id === node.id); if (shape) saveMaterial(shape, node.name); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--accent)]" title="收藏" aria-label="收藏">
           <Star size={11} />
         </button>
-        <button onClick={(e) => { e.stopPropagation(); deleteShape(shape.id); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--danger)]" title="删除" aria-label="删除">
+        <button onClick={(e) => { e.stopPropagation(); deleteShape(node.id); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--danger)]" title="删除" aria-label="删除">
           <Trash2 size={11} />
         </button>
       </div>
@@ -114,88 +128,119 @@ function LayerItem({ shape, isSelected, depth, isDragOver, onSelect, onDragStart
   );
 }
 
-interface TreeNode {
-  shape: Shape;
-  children: TreeNode[];
-}
+function buildTree(sgNodes: SGNode[]): LayerTreeNode[] {
+  const nodeMap = new Map<string, LayerTreeNode>();
+  const roots: LayerTreeNode[] = [];
 
-function buildTree(shapes: Shape[]): TreeNode[] {
-  const map = new Map<string, TreeNode>();
-  const roots: TreeNode[] = [];
-
-  for (const s of shapes) {
-    map.set(s.id, { shape: s, children: [] });
+  // First pass: create all tree nodes
+  for (const node of sgNodes) {
+    nodeMap.set(node.id, { node, children: [] });
   }
 
-  for (const s of shapes) {
-    const node = map.get(s.id)!;
-    if (s.parentId && map.has(s.parentId)) {
-      map.get(s.parentId)!.children.push(node);
+  // Second pass: build parent-child relationships
+  for (const node of sgNodes) {
+    const treeNode = nodeMap.get(node.id)!;
+    if (node.parentId && nodeMap.has(node.parentId)) {
+      nodeMap.get(node.parentId)!.children.push(treeNode);
     } else {
-      roots.push(node);
+      roots.push(treeNode);
     }
   }
 
-  // Also handle groupId-based grouping for non-frame groups
-  const groupedRoots: TreeNode[] = [];
-  const seenGroups = new Set<string>();
-  const usedAsGroupMember = new Set<string>();
-
-  for (const node of roots) {
-    if (node.shape.groupId) {
-      // Only apply groupId grouping for TOP-LEVEL shapes (no parentId).
-      // Shapes that already have a parentId are correctly nested via parentId
-      // and must NOT be re-parented by groupId logic.
-      if (node.shape.parentId) {
-        groupedRoots.push(node);
-        continue;
-      }
-      if (usedAsGroupMember.has(node.shape.id)) continue;
-      if (seenGroups.has(node.shape.groupId)) continue;
-      seenGroups.add(node.shape.groupId);
-      const groupMembers = roots.filter(n => n.shape.groupId === node.shape.groupId);
-      groupMembers.forEach(m => usedAsGroupMember.add(m.shape.id));
-      groupedRoots.push({
-        shape: { ...node.shape, name: `⊟ 组`, type: 'component' as Shape['type'] },
-        children: groupMembers,
-      });
-    } else {
-      groupedRoots.push(node);
-    }
-  }
-
-  return groupedRoots;
+  return roots;
 }
 
 export default function LayerPanel() {
-  const { shapes, selectedIds, setSelectedIds } = useEditorStore();
-  const store = useEditorStore();
+  const { selectedIds, setSelectedIds } = useEditorStore();
+  const shapes = useEditorStore((s) => s.shapes);
+  const engine = getEditorEngine();
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const draggedId = useRef<string | null>(null);
-  // Store all ids being dragged together (same parent, same z-order group)
   const draggedGroupRef = useRef<string[]>([]);
 
-  // In Figma: when you drag a shape, all shapes ABOVE it (later in sibling array)
-  // move with it, because they visually sit on top of it.
-  // e.g. [A(0), B(1), C(2)] -> dragging C drags [C, B, A]
-  const handleDragStart = useCallback((e: DragEvent, id: string) => {
-    const shape = shapes.find(s => s.id === id);
-    if (!shape) return;
-    // Collect all shapes above `id` in the same parent (same parentId or both null)
-    const parentId = shape.parentId ?? null;
-    const siblings = shapes.filter(s => (s.parentId ?? null) === parentId);
-    // sibling indices in sibling array: 0=bottom, last=top
+  // Get SceneGraph tree (source of truth for hierarchy)
+  const sceneGraphTree = useMemo((): LayerTreeNode[] => {
+    if (!engine) return [];
+    const sg = engine.getSceneGraph();
+    const page = sg.getCurrentPage();
+    if (!page) return [];
+    const descendants = sg.getDescendants(page.id);
+    return buildTree(descendants);
+  }, [shapes, engine]); // shapes is the trigger — when shapes[] changes, tree re-reads
+
+  // Get all node IDs in tree order (for search/filter)
+  const allNodeIds = useMemo(() => {
+    function collect(node: LayerTreeNode): string[] {
+      return [node.node.id, ...node.children.flatMap(collect)];
+    }
+    return sceneGraphTree.flatMap(collect);
+  }, [sceneGraphTree]);
+
+  // Filter tree by search query
+  const filteredTree = useMemo(() => {
+    if (!searchQuery.trim()) return sceneGraphTree;
+    const q = searchQuery.toLowerCase();
+
+    function matchesSearch(node: SGNode): boolean {
+      return node.name.toLowerCase().includes(q) || node.type.toLowerCase().includes(q);
+    }
+
+    // Find matching node IDs and their ancestors
+    const matchingIds = new Set<string>();
+    const ancestorIds = new Set<string>();
+
+    for (const node of allNodeIds) {
+      const sgNode = engine?.getSceneGraph().getNode(node);
+      if (sgNode && matchesSearch(sgNode)) {
+        matchingIds.add(node);
+        // Collect ancestors
+        let cur = sgNode.parentId;
+        while (cur) {
+          ancestorIds.add(cur);
+          const parent = engine?.getSceneGraph().getNode(cur);
+          cur = parent?.parentId ?? null;
+        }
+      }
+    }
+
+    if (matchingIds.size === 0) return [];
+
+    // Filter tree to only matching nodes + ancestors
+    function filterNode(node: LayerTreeNode): LayerTreeNode | null {
+      const include = matchingIds.has(node.node.id) || ancestorIds.has(node.node.id);
+      const filteredChildren = node.children.map(filterNode).filter((n): n is LayerTreeNode => n !== null);
+      if (include || filteredChildren.length > 0) {
+        return { node: node.node, children: filteredChildren };
+      }
+      return null;
+    }
+
+    return sceneGraphTree.map(filterNode).filter((n): n is LayerTreeNode => n !== null);
+  }, [sceneGraphTree, searchQuery, allNodeIds, engine]);
+
+  // Drag: collect dragged group (same z-order as in Figma)
+  const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
+    const sg = engine?.getSceneGraph();
+    if (!sg) return;
+    const node = sg.getNode(id);
+    if (!node) return;
+
+    // Collect siblings: all children of the same parent
+    const siblings = node.parentId
+      ? sg.getChildren(node.parentId)
+      : (sg.getCurrentPage() ? sg.getChildren(sg.getCurrentPage()!.id) : []);
+
     const sibIdx = siblings.findIndex(s => s.id === id);
-    // Shapes above `id`: those with sibling index > sibIdx (later in array = rendered on top)
+    // In Figma: dragging a shape drags it + ALL SHAPES ABOVE IT (later in children array = rendered on top)
     const groupIds = siblings.slice(sibIdx).map(s => s.id);
     draggedId.current = id;
     draggedGroupRef.current = groupIds;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', id);
-  }, [shapes]);
+  }, [engine]);
 
-  const handleDragOver = useCallback((e: DragEvent, id: string) => {
+  const handleDragOver = useCallback((e: React.DragEvent, id: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setDragOverId(id);
@@ -205,76 +250,64 @@ export default function LayerPanel() {
     setDragOverId(null);
   }, []);
 
-  const handleDrop = useCallback((e: DragEvent, targetId: string) => {
+  const handleDrop = useCallback((e: React.DragEvent, targetId: string) => {
     e.preventDefault();
     setDragOverId(null);
     const srcId = draggedId.current;
     const draggedGroup = draggedGroupRef.current;
     if (!srcId || srcId === targetId) return;
-    // draggedGroup must have at least srcId
     if (draggedGroup.length === 0) return;
 
-    const srcShape = shapes.find(s => s.id === srcId);
-    const targetShape = shapes.find(s => s.id === targetId);
-    if (!srcShape || !targetShape) return;
+    const sg = engine?.getSceneGraph();
+    if (!sg) return;
 
-    const srcParentId = srcShape.parentId ?? undefined;
+    const srcNode = sg.getNode(srcId);
+    const targetNode = sg.getNode(targetId);
+    if (!srcNode || !targetNode) return;
 
-    // All shapes in the dragged group must share the same parent as src
-    const allSameParent = draggedGroup.every(gid => {
-      const s = shapes.find(s => s.id === gid);
-      return (s?.parentId ?? undefined) === srcParentId;
-    });
-    if (!allSameParent) {
-      draggedId.current = null;
-      draggedGroupRef.current = [];
-      return;
-    }
+    const srcParentId = srcNode.parentId;
 
-    // Case A: drop onto a container (frame/group/component) -> group becomes children of target
-    if (targetShape.type === 'frame' || targetShape.type === 'group' || targetShape.type === 'component') {
+    // Case A: drop onto a container (frame/group/component) → reparent to container
+    if (targetNode.type === 'frame' || targetNode.type === 'group' || targetNode.type === 'component') {
       if (srcParentId !== targetId) {
-        // Reparent all shapes in the group to the container
-        draggedGroup.forEach(gid => store.reparentShape(gid, targetId));
+        draggedGroup.forEach(gid => engine!.reparentNode(gid, targetId));
+      } else {
+        // Same parent: just reorder to end of container's children
+        draggedGroup.forEach((gid, i) => {
+          const containerChildren = sg.getChildren(targetId);
+          engine!.reorderNode(gid, containerChildren.length + i);
+        });
       }
-      // All shapes in draggedGroup sit above srcId; srcId was last in sibling array (bottom of the group)
-      // After reparent, they need to be moved to end of container's children.
-      // Move each in order (first = lowest z-order in group = goes to container's first child slot, etc.)
-      const containerSiblings = shapes.filter(s => s.parentId === targetId);
-      draggedGroup.forEach((gid, i) => {
-        const targetIndex = containerSiblings.length + i;
-        store.reorderShape(gid, targetIndex);
-      });
       draggedId.current = null;
       draggedGroupRef.current = [];
       return;
     }
 
-    // Case B: drop onto a leaf shape -> group goes to same parent as target, at target's position
-    const targetParent = targetShape.parentId ?? undefined;
-    // Compute target indices from the ORIGINAL shapes array before any mutations
-    const currentSiblings = shapes.filter(s => (s.parentId ?? undefined) === srcParentId);
-    const srcSibIdx = currentSiblings.findIndex(s => s.id === srcId);
-    const targetIndices = draggedGroup.map((gid, i) => {
-      // Each shape in draggedGroup lands at srcSibIdx + i, relative to targetParent's siblings
-      return srcSibIdx + i;
-    });
-    // Apply reparent first (mutates parentId), then reorder all shapes to computed positions
+    // Case B: drop onto a leaf shape → reparent to same parent as target, at target's position
+    const targetParent = targetNode.parentId;
+    const siblings = targetParent ? sg.getChildren(targetParent) : [];
+    const targetIdx = siblings.findIndex(s => s.id === targetId);
+
     if (srcParentId !== targetParent) {
-      draggedGroup.forEach(gid => store.reparentShape(gid, targetParent));
+      draggedGroup.forEach(gid => engine!.reparentNode(gid, targetParent ?? null));
     }
-    // Reorder using indices computed from original state
+    // Reorder: each dragged shape lands at targetIdx + i (relative to where they now live)
     draggedGroup.forEach((gid, i) => {
-      store.reorderShape(gid, targetIndices[i]);
+      engine!.reorderNode(gid, targetIdx + i);
     });
 
     draggedId.current = null;
     draggedGroupRef.current = [];
-  }, [shapes, store]);
+  }, [engine]);
 
   const handleSelect = useCallback((id: string, addToSelection: boolean) => {
-    const shape = shapes.find(s => s.id === id);
-    const groupIds = shape?.groupId ? shapes.filter(s => s.groupId === shape.groupId).map(s => s.id) : [id];
+    const sg = engine?.getSceneGraph();
+    if (!sg) return;
+    const node = sg.getNode(id);
+    const groupIds = node?.parentId
+      ? sg.getChildren(node.parentId).slice(sg.getChildren(node.parentId).findIndex(s => s.id === id)).map(s => s.id)
+      : [id];
+
     if (addToSelection) {
       const allSelected = groupIds.every(gid => selectedIds.includes(gid));
       if (allSelected) setSelectedIds(selectedIds.filter(sid => !groupIds.includes(sid)));
@@ -282,42 +315,7 @@ export default function LayerPanel() {
     } else {
       setSelectedIds(groupIds);
     }
-  }, [shapes, selectedIds, setSelectedIds]);
-
-  const filteredShapes = useMemo(() => {
-    if (!searchQuery.trim()) return shapes;
-    const q = searchQuery.toLowerCase();
-
-    function matchesSearch(shape: Shape): boolean {
-      if (shape.name.toLowerCase().includes(q) || shape.type.toLowerCase().includes(q)) return true;
-      return false;
-    }
-
-    function getAncestorIds(shape: Shape, allShapes: Shape[]): Set<string> {
-      const ancestorIds = new Set<string>();
-      let current = shape;
-      while (current.parentId) {
-        ancestorIds.add(current.parentId);
-        const parent = allShapes.find(s => s.id === current.parentId);
-        if (!parent) break;
-        current = parent;
-      }
-      return ancestorIds;
-    }
-
-    // Find all matching shapes and their ancestors
-    const matchingShapes = shapes.filter(matchesSearch);
-    const extraAncestorIds = new Set<string>();
-    matchingShapes.forEach(m => {
-      getAncestorIds(m, shapes).forEach(id => extraAncestorIds.add(id));
-    });
-
-    return shapes.filter(s =>
-      matchesSearch(s) || extraAncestorIds.has(s.id)
-    );
-  }, [shapes, searchQuery]);
-
-  const tree = useMemo(() => buildTree([...filteredShapes].reverse()), [filteredShapes]);
+  }, [engine, selectedIds, setSelectedIds]);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const toggle = (id: string) => setCollapsed(prev => {
@@ -326,41 +324,35 @@ export default function LayerPanel() {
     return next;
   });
 
-  const renderNode = (node: TreeNode, depth: number): React.ReactNode => {
-    const hasChildren = node.children.length > 0;
-    const isCollapsed = collapsed.has(node.shape.id);
-    const isContainer = node.shape.type === 'frame' || node.shape.type === 'group' || node.shape.type === 'component';
+  const isContainerType = (type: string) =>
+    type === 'frame' || type === 'group' || type === 'component';
 
-    // Helper to check if any ancestor is selected
-    const isAncestorSelected = (shapeId: string): boolean => {
-      const shape = shapes.find(s => s.id === shapeId);
-      if (!shape || !shape.parentId) return false;
-      if (selectedIds.includes(shape.parentId)) return true;
-      return isAncestorSelected(shape.parentId);
-    };
-
-    const isEffectivelySelected = selectedIds.includes(node.shape.id) || isAncestorSelected(node.shape.id);
+  const renderNode = (treeNode: LayerTreeNode, depth: number): React.ReactNode => {
+    const node = treeNode.node;
+    const hasChildren = treeNode.children.length > 0;
+    const isCollapsed = collapsed.has(node.id);
+    const isContainer = isContainerType(node.type);
+    const isEffectivelySelected = selectedIds.includes(node.id);
 
     if (hasChildren || isContainer) {
       return (
-        <div key={node.shape.id}>
+        <div key={node.id}>
           <div
             className={`group flex items-center gap-1 cursor-pointer hover:bg-[var(--bg-elevated)] transition-colors ${isEffectivelySelected ? 'bg-[var(--bg-hover)] border-l-2 border-l-[var(--accent)]' : 'border-l-2 border-l-transparent'}`}
             style={{ paddingLeft: 8 + depth * 16, paddingRight: 12, paddingTop: 4, paddingBottom: 4 }}
             onClick={(e) => {
-              // Check if click originated from chevron button (toggle collapse, don't select)
               const target = e.target as HTMLElement;
               if (target.closest('button[data-chevron]')) {
-                toggle(node.shape.id);
+                toggle(node.id);
                 return;
               }
-              handleSelect(node.shape.id, e.shiftKey);
+              handleSelect(node.id, e.shiftKey);
             }}
           >
             {isContainer ? (
               <button
-                data-chevron={node.shape.id}
-                onClick={(e) => { e.stopPropagation(); toggle(node.shape.id); }}
+                data-chevron={node.id}
+                onClick={(e) => { e.stopPropagation(); toggle(node.id); }}
                 className="p-0.5 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
                 aria-label={isCollapsed ? '展开' : '折叠'}
               >
@@ -370,47 +362,46 @@ export default function LayerPanel() {
               <div className="w-4" />
             )}
             <span className="w-4 h-4 flex items-center justify-center text-[var(--text-tertiary)] flex-shrink-0">
-              {typeIconMap[node.shape.type] || <Layers size={13} />}
+              {typeIconMap[node.type] || <Layers size={13} />}
             </span>
-            <span className="flex-1 text-xs truncate text-[var(--text-primary)]">{node.shape.name}</span>
+            <span className="flex-1 text-xs truncate text-[var(--text-primary)]">{node.name}</span>
             {isContainer && hasChildren && (
-              <span className="text-[9px] text-[var(--text-tertiary)] flex-shrink-0">({node.children.length})</span>
+              <span className="text-[9px] text-[var(--text-tertiary)] flex-shrink-0">({treeNode.children.length})</span>
             )}
-            {isContainer && node.shape.autoLayout && (
+            {isContainer && (node as any).layoutMode && (
               <span className="text-[9px] px-1 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] flex-shrink-0">
-                {node.shape.autoLayout.direction === 'horizontal' ? '→' : '↓'}
+                {(node as any).layoutMode === 'horizontal' ? '→' : (node as any).layoutMode === 'vertical' ? '↓' : ''}
               </span>
             )}
-            {/* Action buttons for container nodes */}
             {isContainer && (
               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                <button onClick={(e) => { e.stopPropagation(); useEditorStore.getState().updateShape(node.shape.id, { visible: !node.shape.visible }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={node.shape.visible ? '隐藏' : '显示'} aria-label={node.shape.visible ? '隐藏' : '显示'}>
-                  {node.shape.visible ? <Eye size={11} /> : <EyeOff size={11} />}
+                <button onClick={(e) => { e.stopPropagation(); updateShape(node.id, { visible: !node.visible }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={node.visible ? '隐藏' : '显示'} aria-label={node.visible ? '隐藏' : '显示'}>
+                  {node.visible ? <Eye size={11} /> : <EyeOff size={11} />}
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); useEditorStore.getState().updateShape(node.shape.id, { locked: !node.shape.locked }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={node.shape.locked ? '解锁' : '锁定'} aria-label={node.shape.locked ? '解锁' : '锁定'}>
-                  {node.shape.locked ? <Lock size={11} /> : <Unlock size={11} />}
+                <button onClick={(e) => { e.stopPropagation(); updateShape(node.id, { locked: !node.locked }); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title={node.locked ? '解锁' : '锁定'} aria-label={node.locked ? '解锁' : '锁定'}>
+                  {node.locked ? <Lock size={11} /> : <Unlock size={11} />}
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); useEditorStore.getState().duplicateShapes([node.shape.id]); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title="复制" aria-label="复制">
+                <button onClick={(e) => { e.stopPropagation(); duplicateShapes([node.id]); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)]" title="复制" aria-label="复制">
                   <Copy size={11} />
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); useEditorStore.getState().deleteShape(node.shape.id); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--danger)]" title="删除" aria-label="删除">
+                <button onClick={(e) => { e.stopPropagation(); deleteShape(node.id); }} className="p-0.5 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--danger)]" title="删除" aria-label="删除">
                   <Trash2 size={11} />
                 </button>
               </div>
             )}
           </div>
-          {!isCollapsed && node.children.map(child => renderNode(child, depth + 1))}
+          {!isCollapsed && treeNode.children.map(child => renderNode(child, depth + 1))}
         </div>
       );
     }
 
     return (
       <LayerItem
-        key={node.shape.id}
-        shape={node.shape}
-        isSelected={selectedIds.includes(node.shape.id)}
+        key={node.id}
+        treeNode={treeNode}
+        isSelected={selectedIds.includes(node.id)}
         depth={depth}
-        isDragOver={dragOverId === node.shape.id}
+        isDragOver={dragOverId === node.id}
         onSelect={handleSelect}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
@@ -419,6 +410,17 @@ export default function LayerPanel() {
       />
     );
   };
+
+  // Count total nodes in filtered tree
+  const totalNodes = useMemo(() => {
+    function count(node: LayerTreeNode): number {
+      return 1 + node.children.reduce((sum, c) => sum + count(c), 0);
+    }
+    return filteredTree.reduce((sum, n) => sum + count(n), 0);
+  }, [filteredTree]);
+
+  // updateShape/deleteShape/duplicateShapes from store
+  const { updateShape, deleteShape, duplicateShapes } = useEditorStore.getState();
 
   return (
     <div className="h-full flex flex-col">
@@ -447,7 +449,12 @@ export default function LayerPanel() {
         </button>
         <button
           onClick={() => {
-            const allContainerIds = tree.filter(n => n.shape.type === 'frame' || n.shape.type === 'group' || n.shape.type === 'component').map(n => n.shape.id);
+            const allContainerIds: string[] = [];
+            function collectContainers(node: LayerTreeNode) {
+              if (isContainerType(node.node.type)) allContainerIds.push(node.node.id);
+              node.children.forEach(collectContainers);
+            }
+            filteredTree.forEach(collectContainers);
             setCollapsed(new Set(allContainerIds));
           }}
           className="p-1 hover:bg-[var(--bg-hover)] rounded text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
@@ -456,10 +463,10 @@ export default function LayerPanel() {
         >
           <ChevronsUp size={13} />
         </button>
-        <span className="text-[10px] text-[var(--text-tertiary)] font-mono flex-shrink-0">{filteredShapes.length}</span>
+        <span className="text-[10px] text-[var(--text-tertiary)] font-mono flex-shrink-0">{totalNodes}</span>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {shapes.length === 0 ? (
+        {sceneGraphTree.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
             <div className="w-12 h-12 mb-3 rounded-full bg-[var(--bg-elevated)] flex items-center justify-center">
               <Layers size={20} className="text-[var(--text-tertiary)]" />
@@ -468,7 +475,7 @@ export default function LayerPanel() {
             <p className="text-xs text-[var(--text-tertiary)] mt-1 opacity-60">使用工具栏绘制，或让 AI 帮你创作</p>
           </div>
         ) : (
-          tree.map(node => renderNode(node, 0))
+          filteredTree.map(node => renderNode(node, 0))
         )}
       </div>
     </div>

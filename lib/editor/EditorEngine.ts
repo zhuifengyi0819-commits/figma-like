@@ -472,28 +472,55 @@ export class EditorEngine {
     return this.history;
   }
 
+  /** Expose SceneGraph for direct tree access (e.g. LayerPanel) */
+  getSceneGraph(): SceneGraph {
+    return this.sceneGraph;
+  }
+
   // ============================================================
-  // Layer Order
+  // Layer Order (direct SceneGraph — no history needed for reorder)
   // ============================================================
 
   bringToFront(): void {
     const ids = this.getState().selectedIds;
     this.selection.bringToFront(ids);
+    this.events.onShapesChange?.();
   }
 
   sendToBack(): void {
     const ids = this.getState().selectedIds;
     this.selection.sendToBack(ids);
+    this.events.onShapesChange?.();
   }
 
   bringForward(): void {
     const ids = this.getState().selectedIds;
     this.selection.bringForward(ids);
+    this.events.onShapesChange?.();
   }
 
   sendBackward(): void {
     const ids = this.getState().selectedIds;
     this.selection.sendBackward(ids);
+    this.events.onShapesChange?.();
+  }
+
+  /**
+   * Reorder a node within its parent (Z-order change).
+   */
+  reorderNode(nodeId: string, newIndex: number): void {
+    this.sceneGraph.reorderNode(nodeId, newIndex);
+    this.events.onShapesChange?.();
+  }
+
+  /**
+   * Reparent a node (move to a different container).
+   */
+  reparentNode(nodeId: string, newParentId: string | null, newIndex?: number): void {
+    if (newParentId) {
+      this.sceneGraph.moveNode(nodeId, newParentId, newIndex);
+    }
+    this.events.onShapesChange?.();
   }
 
   // ============================================================
